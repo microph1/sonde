@@ -3,9 +3,10 @@ import { DatePipe } from '@angular/common';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 
+import { LiveStream } from '../../core/live-stream';
 import { RowStream } from '../../core/stream';
 import { Telemetry } from '../../core/telemetry';
-import { Span } from '../../core/telemetry.model';
+import { Span, TraceFilters } from '../../core/telemetry.model';
 import { DurationPipe } from '../../shared/duration-pipe';
 
 @Component({
@@ -29,13 +30,23 @@ import { DurationPipe } from '../../shared/duration-pipe';
       </label>
       <label>Slower than (ms) <input formControlName="minDurationMs" type="number" min="0" /></label>
       <label>Limit <input formControlName="limit" type="number" min="1" /></label>
-      <button type="submit">Search</button>
+      <button type="submit" [disabled]="isLive()">Search</button>
       @if (streaming()) {
         <button type="button" (click)="stop()">Stop</button>
+      }
+      @if (isLive()) {
+        <button type="button" (click)="stopLive()">Stop tail</button>
+      } @else {
+        <button type="button" (click)="startLive()">Live tail</button>
       }
     </form>
 
     <p class="status" aria-live="polite">
+      @if (isLive()) {
+        <span class="pill" [class.connecting]="liveState() !== 'live'">
+          {{ liveState() === 'live' ? 'live' : 'reconnecting…' }}
+        </span>
+      }
       {{ rows().length }} spans{{ streaming() ? ' — streaming…' : '' }}
     </p>
 
@@ -94,10 +105,34 @@ import { DurationPipe } from '../../shared/duration-pipe';
       font-size: 0.85rem;
     }
 
-    .status { color: var(--text-dim); }
+    .status { color: var(--text-dim); display: flex; align-items: center; gap: 0.5rem; }
     .error { color: var(--error); }
     .hint { color: var(--text-dim); }
     .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.1rem 0.5rem;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--ok) 18%, transparent);
+      color: var(--ok);
+      font-size: 0.8rem;
+    }
+
+    .pill::before {
+      content: '';
+      width: 0.45rem;
+      height: 0.45rem;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .pill.connecting {
+      background: color-mix(in srgb, var(--warn) 18%, transparent);
+      color: var(--warn);
+    }
 
     .sr-only {
       position: absolute;
@@ -120,11 +155,19 @@ export class TracesView {
     limit: new FormControl(200),
   });
 
-  private readonly stream = signal<RowStream<Span> | null>(null);
+  private readonly search = signal<RowStream<Span> | null>(null);
+  private readonly live = signal<LiveStream<Span> | null>(null);
 
-  protected readonly rows = computed(() => this.stream()?.rows() ?? []);
-  protected readonly streaming = computed(() => this.stream()?.state() === 'streaming');
-  protected readonly error = computed(() => this.stream()?.error() ?? null);
+  protected readonly isLive = computed(() => this.live() !== null);
+
+  /** One list, two sources: a finite search or an open tail, never both. */
+  protected readonly rows = computed<readonly Span[]>(
+    () => this.live()?.rows() ?? this.search()?.rows() ?? [],
+  );
+
+  protected readonly streaming = computed(() => this.search()?.state() === 'streaming');
+  protected readonly liveState = computed(() => this.live()?.state() ?? 'closed');
+  protected readonly error = computed(() => this.search()?.error() ?? null);
 
   constructor() {
     this.run();
@@ -132,26 +175,47 @@ export class TracesView {
     // A new search replaces the old stream; the abandoned one is aborted so its
     // rows stop arriving and the request stops occupying the server.
     effect((onCleanup) => {
-      const current = this.stream();
+      const current = this.search();
       onCleanup(() => current?.cancel());
+    });
+
+    effect((onCleanup) => {
+      const current = this.live();
+      onCleanup(() => current?.close());
     });
   }
 
   protected run(): void {
-    const { service, name, status, minDurationMs, limit } = this.filters.getRawValue();
+    this.stopLive();
+    this.search.set(this.telemetry.searchTraces(this.currentFilters()));
+  }
 
-    this.stream.set(
-      this.telemetry.searchTraces({
-        service: service ?? '',
-        name: name ?? '',
-        status: status ?? '',
-        minDurationMs: minDurationMs ?? 0,
-        limit: limit ?? 200,
-      }),
-    );
+  /** Switching to the tail cancels the search: the two would interleave rows
+   * from different time windows into one list. */
+  protected startLive(): void {
+    this.search()?.cancel();
+    this.search.set(null);
+    this.live.set(this.telemetry.tailTraces(this.currentFilters()));
+  }
+
+  protected stopLive(): void {
+    this.live()?.close();
+    this.live.set(null);
   }
 
   protected stop(): void {
-    this.stream()?.cancel();
+    this.search()?.cancel();
+  }
+
+  private currentFilters(): TraceFilters {
+    const { service, name, status, minDurationMs, limit } = this.filters.getRawValue();
+
+    return {
+      service: service ?? '',
+      name: name ?? '',
+      status: status ?? '',
+      minDurationMs: minDurationMs ?? 0,
+      limit: limit ?? 200,
+    };
   }
 }

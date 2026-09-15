@@ -1,10 +1,12 @@
-import { Body, Endpoint, Lambda } from '@microgamma/apigator';
+import { Body, Endpoint, Lambda, Path } from '@microgamma/apigator';
 import { Inject } from '@microphi/di';
 
 import { InjectableEndpoint } from '../server/injectable-endpoint';
 
 import { ClickHouseService } from '../clickhouse/clickhouse.service';
+import { SseResult } from '../clickhouse/sse-result';
 import { StreamingResult } from '../clickhouse/streaming-result';
+import { tail } from '../clickhouse/tail';
 import { configFromEnv } from '../config';
 import { SearchFilters, WINDOW_SQL, baseParams } from './filters';
 
@@ -49,4 +51,56 @@ export class LogsEndpoint {
       params,
     );
   }
+
+  /**
+   * Live tail as server-sent events.
+   *
+   * A GET with filters in the query string because that is all `EventSource`
+   * can issue � and `EventSource` is the point: it reconnects on its own when
+   * the connection drops, which a tail that is meant to stay open all day needs
+   * and a finite search does not.
+   */
+  @Lambda({ method: 'GET', path: '/logs/tail' })
+  public async tail(
+    @Path('service') service?: string,
+    @Path('minSeverity') minSeverity?: string,
+    @Path('contains') contains?: string,
+  ): Promise<SseResult> {
+    const params = {
+      service: service ?? '',
+      minSeverity: Math.max(0, Math.floor(Number(minSeverity ?? 0)) || 0),
+      contains: contains ?? '',
+      limit: 500,
+    };
+
+    const sql = `SELECT Timestamp, ServiceName, SeverityText, SeverityNumber, Body,
+                        TraceId, SpanId, ScopeName, LogAttributes, ResourceAttributes
+                 FROM otel_logs
+                 WHERE Timestamp > parseDateTime64BestEffort({since:String}, 9)
+                   AND ({service:String} = '' OR ServiceName = {service:String})
+                   AND SeverityNumber >= {minSeverity:Int32}
+                   AND ({contains:String} = '' OR positionCaseInsensitive(Body, {contains:String}) > 0)
+                 ORDER BY Timestamp ASC
+                 LIMIT {limit:UInt32}`;
+
+    return new SseResult((signal) =>
+      tail<LogRecordRow>({
+        clickhouse: this.clickhouse,
+        sql,
+        params,
+        since: new Date().toISOString(),
+        // Log records carry no id, so identity is the fields that would have to
+        // collide for two records to be genuinely indistinguishable.
+        key: (row) => `${row.Timestamp}|${row.ServiceName}|${row.SpanId}|${row.Body}`,
+        signal,
+      }),
+    );
+  }
+}
+
+interface LogRecordRow {
+  readonly Timestamp: string;
+  readonly ServiceName: string;
+  readonly SpanId: string;
+  readonly Body: string;
 }

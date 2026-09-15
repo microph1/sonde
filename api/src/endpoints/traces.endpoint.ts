@@ -4,7 +4,9 @@ import { Inject } from '@microphi/di';
 import { InjectableEndpoint } from '../server/injectable-endpoint';
 
 import { ClickHouseService } from '../clickhouse/clickhouse.service';
+import { SseResult } from '../clickhouse/sse-result';
 import { StreamingResult } from '../clickhouse/streaming-result';
+import { tail } from '../clickhouse/tail';
 import { configFromEnv } from '../config';
 import { SearchFilters, WINDOW_SQL, baseParams } from './filters';
 
@@ -70,6 +72,45 @@ export class TracesEndpoint {
        WHERE TraceId = {traceId:String}
        ORDER BY Timestamp ASC`,
       { traceId },
+    );
+  }
+
+  /**
+   * Live tail as server-sent events.
+   *
+   * A GET with filters in the query string because that is all `EventSource`
+   * can issue — and `EventSource` is the point: it reconnects on its own when
+   * the connection drops, which a tail meant to stay open all day needs and a
+   * finite search does not.
+   */
+  @Lambda({ method: 'GET', path: '/traces/tail' })
+  public async tail(
+    @Path('service') service?: string,
+    @Path('status') status?: string,
+  ): Promise<SseResult> {
+    const params = {
+      service: service ?? '',
+      status: status ?? '',
+      limit: 500,
+    };
+
+    const sql = `SELECT ${SPAN_COLUMNS}
+                 FROM otel_traces
+                 WHERE Timestamp > parseDateTime64BestEffort({since:String}, 9)
+                   AND ({service:String} = '' OR ServiceName = {service:String})
+                   AND ({status:String} = '' OR StatusCode = {status:String})
+                 ORDER BY Timestamp ASC
+                 LIMIT {limit:UInt32}`;
+
+    return new SseResult((signal) =>
+      tail<{ Timestamp: string; SpanId: string }>({
+        clickhouse: this.clickhouse,
+        sql,
+        params,
+        since: new Date().toISOString(),
+        key: (row) => row.SpanId,
+        signal,
+      }),
     );
   }
 }

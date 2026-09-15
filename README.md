@@ -153,10 +153,27 @@ running, and changing a filter aborts the request in flight.
 | `POST /api/traces/search` | NDJSON | filters: service, name, status, minDurationMs, from, to, limit |
 | `GET /api/traces/{traceId}` | NDJSON | every span of one trace, oldest first |
 | `POST /api/logs/search` | NDJSON | filters: service, contains, minSeverity, traceId, from, to, limit |
+| `GET /api/traces/tail` | SSE | live spans; filters: service, status |
+| `GET /api/logs/tail` | SSE | live records; filters: service, minSeverity, contains |
 | `GET /api/health` | JSON | checks ClickHouse is reachable |
 
 Filters reach ClickHouse as bound `{name:Type}` parameters, never as
 interpolated SQL.
+
+### Search streams, tails subscribe
+
+The two use different transports on purpose. A search is finite, so it is
+chunked NDJSON over `fetch`: it ends when the rows run out, and an
+`EventSource` would reconnect and replay it. A tail is open-ended, so it is
+SSE: `EventSource` reconnects on its own and resumes from `Last-Event-ID`,
+which is what a connection meant to stay open all day needs. The tail also
+accepts its filters in the query string, because a GET with no body is all an
+`EventSource` can issue.
+
+ClickHouse cannot push, so a tail polls on a watermark held back by ten seconds
+and de-duplicates what it re-reads. Without the overlap, any record whose event
+timestamp is older than the newest already delivered would be missed — routine
+rather than rare with a broker in the ingest path.
 
 The two local packages are consumed through `file:` paths into their checkouts,
 which npm materialises as symlinks — edit them and the change is picked up on

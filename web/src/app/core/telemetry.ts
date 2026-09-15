@@ -1,6 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 
 import { API_BASE_URL } from './api-base-url';
+import { LiveStream, liveStream } from './live-stream';
 import { RowStream, streamRows } from './stream';
 import { LogFilters, LogRecord, ServiceSummary, Span, TraceFilters } from './telemetry.model';
 
@@ -35,6 +36,32 @@ export class Telemetry {
 
   trace(traceId: string): RowStream<Span> {
     return streamRows<Span>((signal) => fetch(`${this.baseUrl}/traces/${traceId}`, { signal }));
+  }
+
+  /** Live tail of logs matching the filters, as server-sent events. */
+  tailLogs(filters: LogFilters): LiveStream<LogRecord> {
+    return liveStream<LogRecord>(this.tailUrl("/logs/tail", filters));
+  }
+
+  /** Live tail of spans matching the filters, as server-sent events. */
+  tailTraces(filters: TraceFilters): LiveStream<Span> {
+    return liveStream<Span>(this.tailUrl("/traces/tail", filters));
+  }
+
+  /** An EventSource can only issue a GET, so a tail carries its filters in the
+   * query string; blank ones are dropped so the URL reads as what was asked. */
+  private tailUrl(path: string, filters: object): string {
+    const query = new URLSearchParams();
+
+    for (const [name, value] of Object.entries(filters)) {
+      if (value !== undefined && value !== null && value !== "" && value !== 0) {
+        query.set(name, String(value));
+      }
+    }
+
+    const suffix = query.size > 0 ? `?${query}` : '';
+
+    return `${this.baseUrl}${path}${suffix}`;
   }
 
   private search<T>(path: string, filters: object): RowStream<T> {

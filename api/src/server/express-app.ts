@@ -32,7 +32,7 @@ function register(app: Express, instance: object): void {
   const klass = instance.constructor;
   const { basePath = '' } = getEndpointMetadataFromClass(klass) ?? {};
 
-  for (const lambda of getLambdaMetadataFromClass(klass) ?? []) {
+  for (const lambda of bySpecificity(getLambdaMetadataFromClass(klass) ?? [])) {
     const path = toExpressPath(`${basePath}${lambda.path}`);
     const method = String(lambda.method).toLowerCase() as 'get' | 'post';
     const handler = (instance as Record<string, Handler>)[lambda.name];
@@ -44,6 +44,20 @@ function register(app: Express, instance: object): void {
     d('route', method.toUpperCase(), path);
     app[method](path, (req, res) => handler.call(instance, req, res));
   }
+}
+
+/**
+ * Literal paths before parameterised ones.
+ *
+ * Express matches in registration order, so `/traces/{traceId}` declared first
+ * would swallow `/traces/tail` and hand "tail" over as a trace id. Ordering by
+ * how many parameters a path has removes the dependency on the order methods
+ * happen to be declared in.
+ */
+function bySpecificity<T extends { path: string }>(lambdas: T[]): T[] {
+  const parameters = (path: string): number => (path.match(/\{/g) ?? []).length;
+
+  return [...lambdas].sort((a, b) => parameters(a.path) - parameters(b.path));
 }
 
 /** apigator declares AWS-style `/traces/{traceId}`; Express wants `:traceId`. */
