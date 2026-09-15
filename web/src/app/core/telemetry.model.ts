@@ -1,0 +1,66 @@
+/** Column names are ClickHouse's, unchanged: the rows are piped from the
+ * database to the browser without an intermediate shape to keep in sync. */
+
+export interface Attributes {
+  readonly [key: string]: string;
+}
+
+export interface Span {
+  readonly Timestamp: string;
+  readonly TraceId: string;
+  readonly SpanId: string;
+  readonly ParentSpanId: string;
+  readonly SpanName: string;
+  readonly SpanKind: string;
+  readonly ServiceName: string;
+  /** Nanoseconds. */
+  readonly Duration: number;
+  readonly StatusCode: string;
+  readonly StatusMessage: string;
+  readonly ScopeName: string;
+  readonly SpanAttributes: Attributes;
+  readonly ResourceAttributes: Attributes;
+  readonly EventsTimestamp?: string[];
+  readonly EventsName?: string[];
+  readonly EventsAttributes?: Attributes[];
+}
+
+export interface LogRecord {
+  readonly Timestamp: string;
+  readonly ServiceName: string;
+  readonly SeverityText: string;
+  readonly SeverityNumber: number;
+  readonly Body: string;
+  readonly TraceId: string;
+  readonly SpanId: string;
+  readonly ScopeName: string;
+  readonly LogAttributes: Attributes;
+  readonly ResourceAttributes: Attributes;
+}
+
+export interface ServiceSummary {
+  readonly ServiceName: string;
+  readonly traces: number;
+  readonly logs: number;
+  readonly lastSeen: string;
+}
+
+export interface TraceFilters {
+  service?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  minDurationMs?: number;
+  status?: string;
+  name?: string;
+}
+
+export interface LogFilters {
+  service?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  minSeverity?: number;
+  contains?: string;
+  traceId?: string;
+}

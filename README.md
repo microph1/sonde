@@ -127,6 +127,41 @@ text, arrays and nested key/value lists keep their OTLP JSON shape. Exponential
 histograms, summaries and exemplars have no table yet — those points are dropped
 with a `warn` naming the metric, and the batch is still acknowledged.
 
+## Read path
+
+```
+Angular (:4200) ──▶ api (:4319) ──▶ ClickHouse
+```
+
+TypeScript, on the microphi stack: `@microphi/di` for the container and
+`@microgamma/apigator` for the endpoint decorators, with Express underneath.
+
+```sh
+cd api  && npm install && npm run build && npm start
+cd web  && npm install && npm start          # proxies /api to :4319
+```
+
+The API never materialises a result set. `StreamingEventHandler` extends
+apigator's Express handler so an endpoint returning a `StreamingResult` gets
+ClickHouse's `JSONEachRow` body piped straight at the client as NDJSON, and the
+Angular client decodes it line by line — rows appear while the query is still
+running, and changing a filter aborts the request in flight.
+
+| Endpoint | | |
+|---|---|---|
+| `GET /api/services` | JSON | services with span/log counts |
+| `POST /api/traces/search` | NDJSON | filters: service, name, status, minDurationMs, from, to, limit |
+| `GET /api/traces/{traceId}` | NDJSON | every span of one trace, oldest first |
+| `POST /api/logs/search` | NDJSON | filters: service, contains, minSeverity, traceId, from, to, limit |
+| `GET /api/health` | JSON | checks ClickHouse is reachable |
+
+Filters reach ClickHouse as bound `{name:Type}` parameters, never as
+interpolated SQL.
+
+The two local packages are consumed through `file:` paths into their checkouts,
+which npm materialises as symlinks — edit them and the change is picked up on
+the next build, without publishing.
+
 ## Tests
 
 ```sh
