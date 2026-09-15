@@ -1,0 +1,28 @@
+{
+  "name": "@the-watchers/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Read path for the-watchers: streams OTLP telemetry out of ClickHouse",
+  "type": "commonjs",
+  "main": "lib/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node build.mjs",
+    "dev": "tsc -p tsconfig.json --watch",
+    "start": "node lib/main.js",
+    "test": "node --test lib/**/*.spec.js"
+  },
+  "dependencies": {
+    "@microgamma/apigator": "file:../../microgamma/packages/apigator",
+    "@microphi/debug": "file:../../drugo/microphi/packages/debug",
+    "@microphi/di": "file:../../drugo/microphi/packages/di",
+    "express": "^5.2.1",
+    "reflect-metadata": "^0.2.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.5.1",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.0"
+  },
+  "license": "MIT"
+}
