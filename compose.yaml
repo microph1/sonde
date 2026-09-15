@@ -1,0 +1,89 @@
+name: the-watchers
+
+services:
+  redpanda:
+    image: redpandadata/redpanda:v25.2.3
+    command:
+      - redpanda start
+      - --mode dev-container
+      - --smp 1
+      - --memory 1G
+      # Two listeners: one the other containers use, one reachable from the host.
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:${REDPANDA_PORT:-19092}
+    ports:
+      - "${REDPANDA_PORT:-19092}:19092"
+      - "${REDPANDA_ADMIN_PORT:-9644}:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    environment:
+      CLICKHOUSE_DB: otel
+      CLICKHOUSE_USER: watchers
+      CLICKHOUSE_PASSWORD: watchers
+      # Without this the bootstrap user is created without DDL rights and the
+      # receiver cannot create its own tables on first start.
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      # Overridable: a ClickHouse already running on the host owns 8123/9000.
+      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  # Terminates OTLP and publishes to Redpanda. Scale this on request rate.
+  receiver:
+    build: .
+    image: the-watchers:local
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    environment: &watchers-env
+      WATCHERS_ROLE: receiver
+      WATCHERS_BACKEND: kafka
+      WATCHERS_GRPC_ADDR: 0.0.0.0:4317
+      WATCHERS_HTTP_ADDR: 0.0.0.0:4318
+      WATCHERS_KAFKA_BROKERS: redpanda:9092
+      WATCHERS_CLICKHOUSE_URL: http://clickhouse:8123
+      WATCHERS_CLICKHOUSE_DATABASE: otel
+      WATCHERS_CLICKHOUSE_USER: watchers
+      WATCHERS_CLICKHOUSE_PASSWORD: watchers
+      RUST_LOG: the_watchers=debug,info
+    ports:
+      - "${WATCHERS_GRPC_PORT:-4317}:4317"
+      - "${WATCHERS_HTTP_PORT:-4318}:4318"
+
+  # Drains Redpanda into ClickHouse. Scale this on write throughput; the
+  # consumer group divides the partitions between replicas.
+  consumer:
+    # Same image as the receiver; only the role differs. Naming it here rather
+    # than repeating `build:` keeps compose from building the context twice.
+    image: the-watchers:local
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      <<: *watchers-env
+      WATCHERS_ROLE: consumer
+
+volumes:
+  clickhouse-data:
+  redpanda-data:

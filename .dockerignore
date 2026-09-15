@@ -1,0 +1,5 @@
+target
+.git
+.env
+compose.yaml
+Dockerfile
