@@ -14,6 +14,8 @@ pub struct Config {
     pub grpc_addr: SocketAddr,
     pub http_addr: SocketAddr,
     pub backend: Backend,
+    /// Origins allowed to export straight from a browser. Empty disables CORS.
+    pub cors_origins: Vec<String>,
     pub clickhouse: ClickHouseConfig,
     pub kafka: KafkaConfig,
 }
@@ -75,6 +77,7 @@ impl Config {
             grpc_addr: parse_env("WATCHERS_GRPC_ADDR", DEFAULT_GRPC_ADDR)?,
             http_addr: parse_env("WATCHERS_HTTP_ADDR", DEFAULT_HTTP_ADDR)?,
             backend: parse_env("WATCHERS_BACKEND", "clickhouse")?,
+            cors_origins: csv_env("WATCHERS_HTTP_CORS_ORIGINS"),
             clickhouse: ClickHouseConfig::from_env()?,
             kafka: KafkaConfig::from_env()?,
         })
@@ -150,6 +153,17 @@ impl FromStr for Backend {
 
 fn env(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_owned())
+}
+
+/// Comma-separated list; blank entries are dropped so a trailing comma or an
+/// empty variable both mean "none".
+fn csv_env(key: &str) -> Vec<String> {
+    env(key, "")
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 fn parse_env<T>(key: &str, default: &str) -> anyhow::Result<T>

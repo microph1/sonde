@@ -25,11 +25,12 @@ async fn main() -> anyhow::Result<()> {
             sink.clone(),
             shutdown.clone(),
         )));
-        tasks.push(tokio::spawn(http::serve(
-            config.http_addr,
-            sink,
-            shutdown.clone(),
-        )));
+        let cors_origins = config.cors_origins.clone();
+        let http_addr = config.http_addr;
+        let http_shutdown = shutdown.clone();
+        tasks.push(tokio::spawn(async move {
+            http::serve(http_addr, sink, &cors_origins, http_shutdown).await
+        }));
     }
 
     if config.role.runs_consumer() {

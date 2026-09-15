@@ -1,8 +1,9 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use anyhow::Context;
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -15,6 +16,7 @@ use prost::Message;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio_util::sync::CancellationToken;
+use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
 use tower_http::decompression::RequestDecompressionLayer;
 
 use crate::sink::{Sink, SinkError};
@@ -29,9 +31,10 @@ const JSON: &str = "application/json";
 pub async fn serve(
     addr: SocketAddr,
     sink: Arc<dyn Sink>,
+    cors_origins: &[String],
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
-    let app = router(sink);
+    let app = router(sink, cors_origins)?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     tracing::info!(%addr, "otlp/http listening");
@@ -43,15 +46,56 @@ pub async fn serve(
     Ok(())
 }
 
-pub fn router(sink: Arc<dyn Sink>) -> Router {
-    Router::new()
+pub fn router(sink: Arc<dyn Sink>, cors_origins: &[String]) -> anyhow::Result<Router> {
+    let router = Router::new()
         .route("/v1/traces", post(export_traces))
         .route("/v1/metrics", post(export_metrics))
         .route("/v1/logs", post(export_logs))
         .route("/healthz", get(|| async { "ok" }))
         .layer(RequestDecompressionLayer::new().gzip(true))
-        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .with_state(sink)
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES));
+
+    let router = match cors(cors_origins)? {
+        Some(layer) => router.layer(layer),
+        None => router,
+    };
+
+    Ok(router.with_state(sink))
+}
+
+/// Browsers exporting OTLP directly send `Content-Type: application/json`,
+/// which is not a CORS-safelisted value, so every export is preceded by a
+/// preflight. Without an allowed origin configured no CORS headers are sent at
+/// all, which is the right default for a receiver reached only by backends.
+fn cors(origins: &[String]) -> anyhow::Result<Option<CorsLayer>> {
+    if origins.is_empty() {
+        return Ok(None);
+    }
+
+    let allow_origin = if origins.iter().any(|origin| origin == "*") {
+        AllowOrigin::any()
+    } else {
+        let values = origins
+            .iter()
+            .map(|origin| {
+                HeaderValue::from_str(origin)
+                    .with_context(|| format!("`{origin}` is not a valid origin"))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        AllowOrigin::list(values)
+    };
+
+    tracing::info!(?origins, "cors enabled");
+
+    Ok(Some(
+        CorsLayer::new()
+            .allow_origin(allow_origin)
+            .allow_methods([Method::POST, Method::OPTIONS])
+            // Mirroring the requested headers rather than sending `*`: the
+            // wildcard is defined not to cover `Authorization`, which browser
+            // exporters do send, and none of this is credentialed anyway.
+            .allow_headers(AllowHeaders::mirror_request()),
+    ))
 }
 
 async fn export_traces(
@@ -176,7 +220,87 @@ mod tests {
     use super::*;
 
     fn app() -> Router {
-        router(Arc::new(LoggingSink::default()))
+        router(Arc::new(LoggingSink::default()), &[]).unwrap()
+    }
+
+    fn app_with_cors(origins: &[&str]) -> Router {
+        let origins: Vec<String> = origins.iter().map(|o| o.to_string()).collect();
+        router(Arc::new(LoggingSink::default()), &origins).unwrap()
+    }
+
+    /// What a browser OTLP exporter actually sends before its first export.
+    async fn preflight(app: Router, origin: &str) -> Response {
+        app.oneshot(
+            Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/v1/traces")
+                .header(header::ORIGIN, origin)
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                .header(
+                    header::ACCESS_CONTROL_REQUEST_HEADERS,
+                    "content-type,authorization",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_preflight_is_allowed_for_a_configured_origin() {
+        let origin = "http://ai-memory.microgamma.localhost";
+        let response = preflight(app_with_cors(&[origin]), origin).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            origin
+        );
+
+        // `*` is defined not to cover Authorization, so it must be named.
+        let allowed = response.headers()[header::ACCESS_CONTROL_ALLOW_HEADERS]
+            .to_str()
+            .unwrap()
+            .to_ascii_lowercase();
+        assert!(allowed.contains("authorization"), "got `{allowed}`");
+        assert!(allowed.contains("content-type"), "got `{allowed}`");
+    }
+
+    #[tokio::test]
+    async fn an_unlisted_origin_gets_no_allow_header() {
+        let response = preflight(
+            app_with_cors(&["http://allowed.localhost"]),
+            "http://evil.example",
+        )
+        .await;
+        assert!(
+            !response
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_wildcard_allows_any_origin() {
+        let response = preflight(app_with_cors(&["*"]), "http://anything.localhost").await;
+        assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+    }
+
+    #[tokio::test]
+    async fn cors_is_off_unless_configured() {
+        let response = preflight(app(), "http://ai-memory.microgamma.localhost").await;
+        assert!(
+            !response
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+        );
+    }
+
+    #[test]
+    fn a_malformed_origin_is_rejected_at_startup() {
+        let bad = vec!["http://\u{7f}bad".to_owned()];
+        assert!(router(Arc::new(LoggingSink::default()), &bad).is_err());
     }
 
     #[test]

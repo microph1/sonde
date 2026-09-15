@@ -16,6 +16,31 @@ exporters ──OTLP──▶ receiver ──▶ Redpanda ──▶ consumer ─
 
 `POST /v1/traces`, `/v1/metrics`, `/v1/logs`; `GET /healthz`.
 
+Browsers can export directly once `WATCHERS_HTTP_CORS_ORIGINS` names their
+origin (or `*`). Preflights mirror the requested headers rather than answering
+`*`, because the wildcard is defined not to cover `Authorization`.
+
+## Pointing an exporter here
+
+Any stock OTel SDK works unchanged:
+
+```sh
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318   # or :4317 for gRPC
+export OTEL_SERVICE_NAME=my-service
+```
+
+From another container, reach the host as `http://host.docker.internal:4318`
+(with `host-gateway`); both listeners bind `0.0.0.0`.
+
+Gotchas worth knowing:
+
+- Deno's built-in OTel takes `OTEL_DENO=true`. `OTEL_DENO=1` is rejected
+  outright ("only true and false are accepted") and you get silence, not an
+  error at the exporter.
+- Prefer explicit-bucket histograms; exponential ones are dropped (see below).
+
+
+
 ## Run
 
 ```sh
@@ -68,6 +93,7 @@ between replicas.
 | `WATCHERS_BACKEND` | `clickhouse` | `kafka`, `clickhouse`, `log` |
 | `WATCHERS_GRPC_ADDR` | `0.0.0.0:4317` | |
 | `WATCHERS_HTTP_ADDR` | `0.0.0.0:4318` | |
+| `WATCHERS_HTTP_CORS_ORIGINS` | | comma-separated origins, or `*`; empty disables CORS |
 | `WATCHERS_KAFKA_BROKERS` | `localhost:9092` | |
 | `WATCHERS_KAFKA_TOPIC_PREFIX` | `otel` | topics are `<prefix>.traces`, `.metrics`, `.logs` |
 | `WATCHERS_KAFKA_GROUP_ID` | `watchers` | |

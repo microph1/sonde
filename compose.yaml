@@ -59,6 +59,9 @@ services:
       WATCHERS_BACKEND: kafka
       WATCHERS_GRPC_ADDR: 0.0.0.0:4317
       WATCHERS_HTTP_ADDR: 0.0.0.0:4318
+      # Dev stack: any local web app may export straight from the browser.
+      # Anywhere else this should be an explicit list of origins.
+      WATCHERS_HTTP_CORS_ORIGINS: "*"
       WATCHERS_KAFKA_BROKERS: redpanda:9092
       WATCHERS_CLICKHOUSE_URL: http://clickhouse:8123
       WATCHERS_CLICKHOUSE_DATABASE: otel
