@@ -230,10 +230,9 @@ export class ServicesView implements OnInit {
 
   ngOnInit(): void {
     this.store.dispatch('loadServices');
-    this.store.changeRange(RANGES[2]);
   }
 
   protected select(range: Range): void {
-    this.store.changeRange(range);
+    this.store.dispatch('selectRange', range);
   }
 }

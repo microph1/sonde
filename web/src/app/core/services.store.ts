@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { Effect, Reduce, Store, makeStore } from '@microphi/store';
-import { Observable, from, of } from 'rxjs';
+import { Observable, from, of, tap } from 'rxjs';
 
 import { Telemetry } from './telemetry';
 import { ServiceSummary, VolumePoint } from './telemetry.model';
@@ -49,7 +49,13 @@ export class ServicesStore
   readonly range$ = this.select((state) => state.range);
 
   constructor() {
-    super({ services: [], volume: [], range: RANGES[2] });
+    super({ services: [], volume: [], range: restoreRange() });
+
+    // The points always follow the range, so the store owns that link rather
+    // than asking every view to remember to dispatch both. `select` rides the
+    // state BehaviorSubject, so this also fires for the restored range on
+    // construction — entering the page needs no separate load.
+    this.range$.subscribe((range) => this.dispatch('loadVolume', range));
   }
 
   @Effect()
@@ -82,7 +88,9 @@ export class ServicesStore
    * not the range they were asked for. */
   @Effect()
   selectRange(range: Range): Observable<Range> {
-    return of(range);
+    // Persisting is a side effect, so it lives in the effect; the reducer stays
+    // a pure state transition.
+    return of(range).pipe(tap(persistRange));
   }
 
   @Reduce()
@@ -90,10 +98,32 @@ export class ServicesStore
     return { ...state, range };
   }
 
-  /** The view's one entry point for changing window, so it never has to know
-   * that two actions are involved. */
-  changeRange(range: Range): void {
-    this.dispatch('selectRange', range);
-    this.dispatch('loadVolume', range);
+}
+
+const RANGE_KEY = 'watchers.services.range';
+const DEFAULT_RANGE = RANGES[2];
+
+/**
+ * Only the label is stored, and it is resolved against the current `RANGES`.
+ * Persisting the whole object would pin a stale bucket size the day these
+ * definitions change.
+ */
+function restoreRange(): Range {
+  try {
+    const label = localStorage.getItem(RANGE_KEY);
+
+    return RANGES.find((range) => range.label === label) ?? DEFAULT_RANGE;
+  } catch {
+    // Storage can be unavailable (private mode, blocked cookies); a forgotten
+    // preference is not worth failing the page over.
+    return DEFAULT_RANGE;
+  }
+}
+
+function persistRange(range: Range): void {
+  try {
+    localStorage.setItem(RANGE_KEY, range.label);
+  } catch {
+    // As above: best effort.
   }
 }
