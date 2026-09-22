@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { Effect, Reduce, Store, makeStore } from '@microphi/store';
-import { Observable, from, map, of, tap } from 'rxjs';
+import { Observable, from, map, of } from 'rxjs';
 
 import { Telemetry } from './telemetry';
 import { ServiceSummary, VolumePoint } from './telemetry.model';
@@ -16,6 +16,10 @@ export const RANGES = [
 ] as const;
 
 export type Range = (typeof RANGES)[number];
+
+/** What a link that names no range gets. The URL is the only place a range is
+ * remembered, so there is nothing else to fall back to. */
+export const DEFAULT_RANGE: Range = RANGES[2];
 
 export interface ServicesState {
   services: ServiceSummary[];
@@ -49,7 +53,7 @@ export class ServicesStore
   readonly range$ = this.select((state) => state.range);
 
   constructor() {
-    super({ services: [], volume: [], range: restoreRange() });
+    super({ services: [], volume: [], range: DEFAULT_RANGE });
 
     // The points always follow the range, so the store owns that link rather
     // than asking every view to remember to dispatch both. `select` rides the
@@ -90,9 +94,7 @@ export class ServicesStore
    * not the range they were asked for. */
   @Effect()
   selectRange(range: Range): Observable<Range> {
-    // Persisting is a side effect, so it lives in the effect; the reducer stays
-    // a pure state transition.
-    return of(range).pipe(tap(persistRange));
+    return of(range);
   }
 
   @Reduce()
@@ -100,34 +102,6 @@ export class ServicesStore
     return { ...state, range };
   }
 
-}
-
-const RANGE_KEY = 'watchers.services.range';
-const DEFAULT_RANGE = RANGES[2];
-
-/**
- * Only the label is stored, and it is resolved against the current `RANGES`.
- * Persisting the whole object would pin a stale bucket size the day these
- * definitions change.
- */
-function restoreRange(): Range {
-  try {
-    const label = localStorage.getItem(RANGE_KEY);
-
-    return RANGES.find((range) => range.label === label) ?? DEFAULT_RANGE;
-  } catch {
-    // Storage can be unavailable (private mode, blocked cookies); a forgotten
-    // preference is not worth failing the page over.
-    return DEFAULT_RANGE;
-  }
-}
-
-function persistRange(range: Range): void {
-  try {
-    localStorage.setItem(RANGE_KEY, range.label);
-  } catch {
-    // As above: best effort.
-  }
 }
 
 /**

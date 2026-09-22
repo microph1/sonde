@@ -4,7 +4,7 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { combineLatest, filter, map, startWith, withLatestFrom } from 'rxjs';
 
-import { RANGES, Range, ServicesStore } from '../../core/services.store';
+import { DEFAULT_RANGE, RANGES, Range, ServicesStore } from '../../core/services.store';
 import { VolumeChart } from '../../shared/volume-chart';
 
 @Component({
@@ -31,7 +31,13 @@ import { VolumeChart } from '../../shared/volume-chart';
 
       <div class="tiles fx-gap-2 fx-mb-5">
         @for (tile of tiles$ | async; track tile.label) {
-          <a class="tile fx-grid fx-gap-1 fx-p-3" [routerLink]="tile.link" [queryParams]="tile.params">
+          <a
+            class="tile fx-grid fx-gap-1 fx-p-3"
+            [routerLink]="tile.link"
+            [queryParams]="tile.params"
+            [fragment]="tile.fragment"
+            queryParamsHandling="merge"
+          >
             <span class="label">{{ tile.label }}</span>
             <strong class="value" [class.alarming]="tile.alarming">{{ tile.value | number }}</strong>
             <span class="detail">{{ tile.detail }}</span>
@@ -59,7 +65,7 @@ import { VolumeChart } from '../../shared/volume-chart';
       <p class="hint">Loading services…</p>
     }
 
-    <table>
+    <table id="services">
       <caption class="sr-only">Services reporting telemetry</caption>
       <thead>
         <tr>
@@ -184,6 +190,7 @@ export class ServicesView implements OnInit {
           alarming: false,
           link: ['/traces'],
           params: {},
+          fragment: undefined,
         },
         {
           label: 'Log records',
@@ -192,6 +199,7 @@ export class ServicesView implements OnInit {
           alarming: false,
           link: ['/logs'],
           params: {},
+          fragment: undefined,
         },
         {
           label: 'Errors',
@@ -201,14 +209,18 @@ export class ServicesView implements OnInit {
           alarming: errors > 0,
           link: ['/traces'],
           params: { status: 'Error' },
+          fragment: undefined,
         },
         {
           label: 'Services reporting',
           value: services,
           detail: `last ${range.label}`,
           alarming: false,
-          link: ['/logs'],
+          // This one has no search behind it — the list it counts is the table
+          // on this page, so it goes there rather than somewhere adjacent.
+          link: [],
           params: {},
+          fragment: 'services',
         },
       ];
     }),
@@ -253,6 +265,12 @@ export class ServicesView implements OnInit {
 
   ngOnInit(): void {
     this.store.dispatch('loadServices');
+
+    // A link that names no range gets the default written into it, so the URL
+    // always says what is on screen and is always worth copying.
+    if (!this.route.snapshot.queryParamMap.has('range')) {
+      this.select(DEFAULT_RANGE);
+    }
   }
 
   protected select(range: Range): void {
