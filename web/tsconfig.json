@@ -3,6 +3,14 @@
 {
   "compileOnSave": false,
   "compilerOptions": {
+    /* The linked @microphi packages carry their own rxjs. Two copies means two
+       structurally-incompatible Observable types, which makes the store's
+       conditional types fall through to their fallback branch — and, at runtime,
+       two operator registries. Resolution is pinned to this app's copy. */
+    "paths": {
+      "rxjs": ["./node_modules/rxjs"],
+      "rxjs/*": ["./node_modules/rxjs/*"]
+    },
     "strict": true,
     "noImplicitOverride": true,
     "noPropertyAccessFromIndexSignature": true,
