@@ -18,11 +18,20 @@ export class Telemetry {
     return this.get<ServiceSummary[]>('/services');
   }
 
-  /** Volume per service over a window, for the overview charts. */
-  async timeseries(windowMinutes: number, bucketSeconds: number): Promise<VolumePoint[]> {
+  /** Volume per group over a window, for the overview charts. */
+  async timeseries(
+    windowMinutes: number,
+    bucketSeconds: number,
+    grouping: string,
+  ): Promise<VolumePoint[]> {
     return this.get<VolumePoint[]>(
-      `/services/timeseries?windowMinutes=${windowMinutes}&bucketSeconds=${bucketSeconds}`,
+      `/services/timeseries?windowMinutes=${windowMinutes}&bucketSeconds=${bucketSeconds}&group=${grouping}`,
     );
+  }
+
+  /** The dimensions the charts may be split by. */
+  async groupings(): Promise<{ key: string; label: string }[]> {
+    return this.get<{ key: string; label: string }[]>('/groupings');
   }
 
   private async get<T>(path: string): Promise<T> {

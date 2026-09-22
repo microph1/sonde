@@ -15,7 +15,16 @@ import { VolumeChart } from '../../shared/volume-chart';
     @if (range$ | async; as range) {
       <header class="fx-flex fx-items-center fx-gap-4 fx-mb-4">
         <h1>Services</h1>
-        <div class="ranges fx-flex fx-gap-1 fx-ml-a" role="group" aria-label="Time range">
+        <label class="grouping fx-ml-a">
+          Group by
+          <select [value]="(grouping$ | async) ?? 'service'" (change)="selectGrouping($event)">
+            @for (option of groupings$ | async; track option.key) {
+              <option [value]="option.key">{{ option.label }}</option>
+            }
+          </select>
+        </label>
+
+        <div class="ranges fx-flex fx-gap-1" role="group" aria-label="Time range">
           @for (option of ranges; track option.label) {
             <button
               type="button"
@@ -109,6 +118,14 @@ import { VolumeChart } from '../../shared/volume-chart';
       grid-template-columns: repeat(auto-fit, minmax(28rem, 1fr));
     }
 
+    .grouping {
+      display: flex;
+      align-items: center;
+      gap: var(--fx-3xs);
+      color: var(--text-dim);
+      font-size: var(--fx-typography--1);
+    }
+
     .ranges button.active {
       border-color: var(--accent);
       color: var(--text);
@@ -167,6 +184,8 @@ export class ServicesView implements OnInit {
   protected readonly services$ = this.store.services$;
   protected readonly range$ = this.store.range$;
   protected readonly points$ = this.store.volume$;
+  protected readonly grouping$ = this.store.grouping$;
+  protected readonly groupings$ = this.store.groupings$;
 
   /**
    * Headline numbers for the window. These are the questions asked often enough
@@ -265,12 +284,17 @@ export class ServicesView implements OnInit {
 
   ngOnInit(): void {
     this.store.dispatch('loadServices');
+    this.store.dispatch('loadGroupings');
 
     // A link that names no range gets the default written into it, so the URL
     // always says what is on screen and is always worth copying.
     if (!this.route.snapshot.queryParamMap.has('range')) {
       this.select(DEFAULT_RANGE);
     }
+  }
+
+  protected selectGrouping(event: Event): void {
+    this.store.dispatch('selectGrouping', (event.target as HTMLSelectElement).value);
   }
 
   protected select(range: Range): void {

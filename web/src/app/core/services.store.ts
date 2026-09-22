@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { Effect, Reduce, Store, makeStore } from '@microphi/store';
-import { Observable, from, map, of } from 'rxjs';
+import { Observable, combineLatest, from, map, of } from 'rxjs';
 
 import { Telemetry } from './telemetry';
 import { ServiceSummary, VolumePoint } from './telemetry.model';
@@ -25,12 +25,29 @@ export interface ServicesState {
   services: ServiceSummary[];
   volume: VolumePoint[];
   range: Range;
+  /** Which dimension the charts split by. */
+  grouping: string;
+  groupings: Grouping[];
+}
+
+export interface Grouping {
+  readonly key: string;
+  readonly label: string;
 }
 
 export interface ServicesActions {
   loadServices: () => Observable<ServiceSummary[]>;
-  loadVolume: (range: Range) => Observable<VolumePoint[]>;
+  loadVolume: (query: VolumeQuery) => Observable<VolumePoint[]>;
   selectRange: (range: Range) => Observable<Range>;
+  selectGrouping: (grouping: string) => Observable<string>;
+  loadGroupings: () => Observable<Grouping[]>;
+}
+
+/** The charts are a function of both, so they travel together — a request for
+ * one range grouped one way. */
+export interface VolumeQuery {
+  readonly range: Range;
+  readonly grouping: string;
 }
 
 /**
@@ -51,15 +68,19 @@ export class ServicesStore
   readonly services$ = this.select((state) => state.services);
   readonly volume$ = this.select((state) => state.volume);
   readonly range$ = this.select((state) => state.range);
+  readonly grouping$ = this.select((state) => state.grouping);
+  readonly groupings$ = this.select((state) => state.groupings);
 
   constructor() {
-    super({ services: [], volume: [], range: DEFAULT_RANGE });
+    super({ services: [], volume: [], range: DEFAULT_RANGE, grouping: 'service', groupings: [] });
 
-    // The points always follow the range, so the store owns that link rather
-    // than asking every view to remember to dispatch both. `select` rides the
-    // state BehaviorSubject, so this also fires for the restored range on
-    // construction — entering the page needs no separate load.
-    this.range$.subscribe((range) => this.dispatch('loadVolume', range));
+    // The points are a function of the range and the grouping, so the store
+    // owns that link rather than asking every view to remember to dispatch a
+    // reload after each. `select` rides the state BehaviorSubject, so this also
+    // fires on construction — entering the page needs no separate load.
+    combineLatest([this.range$, this.grouping$]).subscribe(([range, grouping]) =>
+      this.dispatch('loadVolume', { range, grouping }),
+    );
   }
 
   @Effect()
@@ -73,10 +94,34 @@ export class ServicesStore
   }
 
   @Effect()
-  loadVolume(range: Range): Observable<VolumePoint[]> {
-    return from(this.telemetry.timeseries(range.windowMinutes, range.bucketSeconds)).pipe(
-      map((points) => densify(points, range)),
-    );
+  loadVolume(query: VolumeQuery): Observable<VolumePoint[]> {
+    return from(
+      this.telemetry.timeseries(
+        query.range.windowMinutes,
+        query.range.bucketSeconds,
+        query.grouping,
+      ),
+    ).pipe(map((points) => densify(points, query.range)));
+  }
+
+  @Effect()
+  selectGrouping(grouping: string): Observable<string> {
+    return of(grouping);
+  }
+
+  @Reduce()
+  onSelectGrouping(state: ServicesState, grouping: string): ServicesState {
+    return { ...state, grouping };
+  }
+
+  @Effect()
+  loadGroupings(): Observable<Grouping[]> {
+    return from(this.telemetry.groupings());
+  }
+
+  @Reduce()
+  onLoadGroupings(state: ServicesState, groupings: Grouping[]): ServicesState {
+    return { ...state, groupings };
   }
 
   /**

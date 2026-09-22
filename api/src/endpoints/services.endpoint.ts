@@ -2,6 +2,7 @@ import { Endpoint, Lambda, Path } from '@microgamma/apigator';
 import { Inject } from '@microphi/di';
 
 import { InjectableEndpoint } from '../server/injectable-endpoint';
+import { GROUPINGS, groupingExpression } from './grouping';
 
 import { ClickHouseService } from '../clickhouse/clickhouse.service';
 
@@ -56,32 +57,45 @@ export class ServicesEndpoint {
   public async timeseries(
     @Path('windowMinutes') windowMinutes?: string,
     @Path('bucketSeconds') bucketSeconds?: string,
+    @Path('group') group?: string,
   ): Promise<VolumePoint[]> {
     const window = clamp(Number(windowMinutes ?? 360), 5, 7 * 24 * 60);
     const bucket = clamp(Number(bucketSeconds ?? 300), 10, 3600);
+    // From an allow-list, never from the request: this one reaches the SQL text
+    // rather than travelling as a bound parameter.
+    const dimension = groupingExpression(group);
 
     return this.clickhouse.rows<VolumePoint>(
-      `SELECT toString(bucket) AS bucket, ServiceName,
+      `SELECT toString(bucket) AS bucket, name AS ServiceName,
               sum(spans) AS spans, sum(logs) AS logs, sum(errors) AS errors
        FROM (
          SELECT toStartOfInterval(Timestamp, INTERVAL {bucket:UInt32} SECOND) AS bucket,
-                ServiceName, count() AS spans, 0 AS logs,
+                ${dimension} AS name, count() AS spans, 0 AS logs,
                 countIf(StatusCode = 'Error') AS errors
          FROM otel_traces
          WHERE Timestamp >= now() - INTERVAL {window:UInt32} MINUTE
-         GROUP BY bucket, ServiceName
+         GROUP BY bucket, name
          UNION ALL
          SELECT toStartOfInterval(Timestamp, INTERVAL {bucket:UInt32} SECOND) AS bucket,
-                ServiceName, 0 AS spans, count() AS logs,
+                ${dimension} AS name, 0 AS spans, count() AS logs,
                 countIf(SeverityNumber >= 17) AS errors
          FROM otel_logs
          WHERE Timestamp >= now() - INTERVAL {window:UInt32} MINUTE
-         GROUP BY bucket, ServiceName
+         GROUP BY bucket, name
        )
-       GROUP BY bucket, ServiceName
+       -- A resource that never set the attribute groups under one honest label
+       -- rather than an empty string that reads as a rendering bug.
+       WHERE name != ''
+       GROUP BY bucket, name
        ORDER BY bucket ASC`,
       { window, bucket },
     );
+  }
+
+  /** The dimensions a caller may group by, for the UI to offer. */
+  @Lambda({ method: 'GET', path: '/groupings' })
+  public async groupings(): Promise<{ key: string; label: string }[]> {
+    return Object.entries(GROUPINGS).map(([key, { label }]) => ({ key, label }));
   }
 
   @Lambda({ method: 'GET', path: '/health' })
