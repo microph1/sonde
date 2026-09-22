@@ -64,3 +64,11 @@ export interface LogFilters {
   contains?: string;
   traceId?: string;
 }
+
+export interface VolumePoint {
+  readonly bucket: string;
+  readonly ServiceName: string;
+  readonly spans: number;
+  readonly logs: number;
+  readonly errors: number;
+}

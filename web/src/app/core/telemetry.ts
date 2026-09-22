@@ -4,7 +4,14 @@ import { API_BASE_URL } from './api-base-url';
 import { LiveStream, liveStream } from './live-stream';
 import { Auth } from './auth';
 import { RowStream, streamRows } from './stream';
-import { LogFilters, LogRecord, ServiceSummary, Span, TraceFilters } from './telemetry.model';
+import {
+  LogFilters,
+  LogRecord,
+  ServiceSummary,
+  Span,
+  TraceFilters,
+  VolumePoint,
+} from './telemetry.model';
 
 /**
  * The only place that knows the API exists.
@@ -30,6 +37,20 @@ export class Telemetry {
     }
 
     return (await response.json()) as ServiceSummary[];
+  }
+
+  /** Volume per service over a window, for the overview charts. */
+  async timeseries(windowMinutes: number, bucketSeconds: number): Promise<VolumePoint[]> {
+    const response = await fetch(
+      `${this.baseUrl}/services/timeseries?windowMinutes=${windowMinutes}&bucketSeconds=${bucketSeconds}`,
+      { credentials: 'include' },
+    );
+
+    if (!response.ok) {
+      throw new Error(`could not load volume (${response.status})`);
+    }
+
+    return (await response.json()) as VolumePoint[];
   }
 
   searchTraces(filters: TraceFilters): RowStream<Span> {
