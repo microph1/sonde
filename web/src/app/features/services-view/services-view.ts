@@ -1,7 +1,8 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
 import { AsyncPipe, DatePipe, DecimalPipe } from '@angular/common';
-import { RouterLink } from '@angular/router';
-import { combineLatest, map, startWith } from 'rxjs';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { combineLatest, filter, map, startWith, withLatestFrom } from 'rxjs';
 
 import { RANGES, Range, ServicesStore } from '../../core/services.store';
 import { VolumeChart } from '../../shared/volume-chart';
@@ -30,11 +31,11 @@ import { VolumeChart } from '../../shared/volume-chart';
 
       <div class="tiles">
         @for (tile of tiles$ | async; track tile.label) {
-          <article class="tile">
+          <a class="tile" [routerLink]="tile.link" [queryParams]="tile.params">
             <span class="label">{{ tile.label }}</span>
             <strong class="value" [class.alarming]="tile.alarming">{{ tile.value | number }}</strong>
             <span class="detail">{{ tile.detail }}</span>
-          </article>
+          </a>
         }
       </div>
 
@@ -124,6 +125,15 @@ import { VolumeChart } from '../../shared/volume-chart';
       border: 1px solid var(--line);
       border-radius: 10px;
       background: var(--surface);
+      color: inherit;
+      text-decoration: none;
+      transition: border-color 0.12s ease, background 0.12s ease;
+    }
+
+    .tile:hover,
+    .tile:focus-visible {
+      border-color: var(--accent);
+      background: var(--surface-raised);
     }
 
     .tile .label {
@@ -178,6 +188,8 @@ import { VolumeChart } from '../../shared/volume-chart';
 })
 export class ServicesView implements OnInit {
   private readonly store = inject(ServicesStore);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
 
   protected readonly ranges = RANGES;
 
@@ -197,17 +209,42 @@ export class ServicesView implements OnInit {
       const errors = points.reduce((sum, point) => sum + point.errors, 0);
       const services = new Set(points.map((point) => point.ServiceName)).size;
 
+      // Every tile leads somewhere: a number worth showing is a number someone
+      // will want to look behind.
       return [
-        { label: 'Spans', value: spans, detail: `last ${range.label}`, alarming: false },
-        { label: 'Log records', value: logs, detail: `last ${range.label}`, alarming: false },
+        {
+          label: 'Spans',
+          value: spans,
+          detail: `last ${range.label}`,
+          alarming: false,
+          link: ['/traces'],
+          params: {},
+        },
+        {
+          label: 'Log records',
+          value: logs,
+          detail: `last ${range.label}`,
+          alarming: false,
+          link: ['/logs'],
+          params: {},
+        },
         {
           label: 'Errors',
           value: errors,
           detail:
             spans + logs > 0 ? `${((errors / (spans + logs)) * 100).toFixed(1)}% of records` : '—',
           alarming: errors > 0,
+          link: ['/traces'],
+          params: { status: 'Error' },
         },
-        { label: 'Services reporting', value: services, detail: `last ${range.label}`, alarming: false },
+        {
+          label: 'Services reporting',
+          value: services,
+          detail: `last ${range.label}`,
+          alarming: false,
+          link: ['/logs'],
+          params: {},
+        },
       ];
     }),
   );
@@ -228,11 +265,40 @@ export class ServicesView implements OnInit {
     .getLoadingFor('loadVolume')
     .pipe(startWith(false));
 
+  constructor() {
+    /**
+     * The URL is the source of truth for the range, so a link carries the view
+     * it was shared from. The flow is one-directional: a click only navigates,
+     * and the range reaches the store from the URL — never both, which is what
+     * would otherwise fight itself on the back button.
+     */
+    this.route.queryParamMap
+      .pipe(
+        map((params) => RANGES.find((range) => range.label === params.get('range'))),
+        withLatestFrom(this.range$),
+        // A missing or unknown param leaves the store's range alone; so does one
+        // that already matches, which is what stops entering the page from
+        // refetching what the store just loaded.
+        filter(([fromUrl, current]) => Boolean(fromUrl) && fromUrl !== current),
+        map(([fromUrl]) => fromUrl as Range),
+        takeUntilDestroyed(),
+      )
+      .subscribe((range) => this.store.dispatch('selectRange', range));
+  }
+
   ngOnInit(): void {
     this.store.dispatch('loadServices');
   }
 
   protected select(range: Range): void {
-    this.store.dispatch('selectRange', range);
+    // `replaceUrl` because choosing a window is refining one view rather than
+    // moving to another; the back button should leave the page, not step
+    // through every range you tried.
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { range: range.label },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
   }
 }

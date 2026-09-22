@@ -148,9 +148,11 @@ export class TracesView {
   private readonly route = inject(ActivatedRoute);
 
   protected readonly filters = new FormGroup({
+    // Seeded from the URL so a link can carry a filtered view — the overview's
+    // tiles arrive here with one already applied.
     service: new FormControl(this.route.snapshot.queryParamMap.get('service') ?? ''),
-    name: new FormControl(''),
-    status: new FormControl(''),
+    name: new FormControl(this.route.snapshot.queryParamMap.get('name') ?? ''),
+    status: new FormControl(this.route.snapshot.queryParamMap.get('status') ?? ''),
     minDurationMs: new FormControl<number | null>(null),
     limit: new FormControl(200),
   });
