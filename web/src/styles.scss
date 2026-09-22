@@ -1,6 +1,58 @@
+@use 'utopia-core-scss/src/utopia' as utopia;
+
+// @microphi utility partials — pure CSS emitters, pulled in individually rather
+// than through main.scss, which still uses the deprecated @import.
+@use '@microphi/styles/scss/display';
+@use '@microphi/styles/scss/flex';
+@use '@microphi/styles/scss/grid';
+@use '@microphi/styles/scss/spacing';
+@use '@microphi/styles/scss/spacing-v2';
+@use '@microphi/styles/scss/sizing';
+@use '@microphi/styles/scss/min-max-sizing';
+@use '@microphi/styles/scss/position';
+@use '@microphi/styles/scss/border-radius';
+@use '@microphi/styles/scss/typography';
+@use '@microphi/styles/scss/fx-font';
+@use '@microphi/styles/scss/text-transform';
+@use '@microphi/styles/scss/opacity';
+@use '@microphi/styles/scss/helpers';
+
 :root {
   color-scheme: dark;
 
+  // The utilities are written against these; utopia generates them as fluid
+  // scales, so spacing and type track the viewport instead of stepping at
+  // breakpoints. A console is read at wildly different window sizes.
+  @include utopia.generateSpaceScale(
+    (
+      'minWidth': 320,
+      'maxWidth': 1600,
+      'minSize': 12,
+      'maxSize': 16,
+      'positiveSteps': (1.5, 2, 2.5, 3),
+      'negativeSteps': (0.25, 0.5, 0.75),
+      'usePx': true,
+      'relativeTo': 'viewport',
+      'prefix': 'fx-',
+    )
+  );
+
+  @include utopia.generateTypeScale(
+    (
+      'minWidth': 320,
+      'maxWidth': 1600,
+      'minFontSize': 13,
+      'maxFontSize': 14,
+      'minTypeScale': 1.2,
+      'maxTypeScale': 1.15,
+      'positiveSteps': 6,
+      'negativeSteps': 3,
+      'relativeTo': 'viewport',
+      'prefix': 'fx-typography-',
+    )
+  );
+
+  // Colour is ours; @microphi/styles supplies layout and type, not a palette.
   --bg: #0e1116;
   --surface: #151a21;
   --surface-raised: #1d232c;
@@ -22,7 +74,9 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: var(--fx-typography-0);
+  line-height: 1.5;
 }
 
 code,
@@ -32,8 +86,8 @@ code,
 }
 
 h1 {
-  margin: 0 0 1rem;
-  font-size: 1.25rem;
+  margin: 0 0 var(--fx-s);
+  font-size: var(--fx-typography-2);
   font-weight: 600;
 }
 
@@ -46,7 +100,7 @@ th {
   text-align: left;
   font-weight: 500;
   color: var(--text-dim);
-  padding: 0.5rem 0.75rem;
+  padding: var(--fx-2xs) var(--fx-xs);
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
@@ -54,7 +108,7 @@ th {
 }
 
 td {
-  padding: 0.45rem 0.75rem;
+  padding: var(--fx-3xs) var(--fx-xs);
   border-bottom: 1px solid var(--line);
   vertical-align: top;
 }
@@ -75,7 +129,7 @@ select {
   background: var(--surface-raised);
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 0.35rem 0.6rem;
+  padding: var(--fx-3xs) var(--fx-2xs);
 }
 
 button {
@@ -96,6 +150,59 @@ button:disabled {
   outline-offset: 2px;
 }
 
-.status-Ok { color: var(--ok); }
-.status-Error { color: var(--error); }
-.status-Unset { color: var(--text-dim); }
+.status-Ok {
+  color: var(--ok);
+}
+
+.status-Error {
+  color: var(--error);
+}
+
+.status-Unset {
+  color: var(--text-dim);
+}
+
+/**
+ * Shared shapes that are this app's own vocabulary rather than layout: a live
+ * indicator and the visually-hidden helper every table caption needs.
+ */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--fx-3xs);
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+  color: var(--ok);
+  font-size: var(--fx-typography--1);
+}
+
+.pill::before {
+  content: '';
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.pill.connecting {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+}
+
+.dim {
+  color: var(--text-dim);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}

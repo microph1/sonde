@@ -15,7 +15,7 @@ import { DurationPipe } from '../../shared/duration-pipe';
   template: `
     <h1>Traces</h1>
 
-    <form [formGroup]="filters" (ngSubmit)="run()" class="filters">
+    <form [formGroup]="filters" (ngSubmit)="run()" class="filters fx-flex fx-flex-wrap fx-items-end fx-gap-3 fx-mb-4">
       <label>Service <input formControlName="service" placeholder="any" class="mono" /></label>
       <label>Span name <input formControlName="name" placeholder="any" class="mono" /></label>
       <label>
@@ -37,7 +37,7 @@ import { DurationPipe } from '../../shared/duration-pipe';
       }
     </form>
 
-    <p class="status" aria-live="polite">
+    <p class="status fx-flex fx-items-center fx-gap-2" aria-live="polite">
       @if ((live$ | async) === true) {
         <span class="pill">live</span>
       }
@@ -79,57 +79,21 @@ import { DurationPipe } from '../../shared/duration-pipe';
     </table>
   `,
   styles: `
-    .filters {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: end;
-      gap: 0.75rem;
-      margin-bottom: 1rem;
-    }
-
+    /* Layout is in the template; this is what the utilities do not cover. */
     .filters label {
       display: flex;
       flex-direction: column;
-      gap: 0.25rem;
+      gap: var(--fx-3xs);
       color: var(--text-dim);
-      font-size: 0.85rem;
+      font-size: var(--fx-typography--1);
     }
 
-    .status { color: var(--text-dim); display: flex; align-items: center; gap: 0.5rem; }
-    .error { color: var(--error); }
-    .hint { color: var(--text-dim); }
-    .num { text-align: right; font-variant-numeric: tabular-nums; }
-
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.35rem;
-      padding: 0.1rem 0.5rem;
-      border-radius: 999px;
-      background: color-mix(in srgb, var(--ok) 18%, transparent);
-      color: var(--ok);
-      font-size: 0.8rem;
+    .status {
+      color: var(--text-dim);
     }
 
-    .pill::before {
-      content: '';
-      width: 0.45rem;
-      height: 0.45rem;
-      border-radius: 50%;
-      background: currentColor;
-    }
-
-    .pill.connecting {
-      background: color-mix(in srgb, var(--warn) 18%, transparent);
-      color: var(--warn);
-    }
-
-    .sr-only {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
+    .hint {
+      color: var(--text-dim);
     }
   `,
 })

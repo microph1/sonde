@@ -13,9 +13,9 @@ import { VolumeChart } from '../../shared/volume-chart';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (range$ | async; as range) {
-      <header class="page">
+      <header class="fx-flex fx-items-center fx-gap-4 fx-mb-4">
         <h1>Services</h1>
-        <div class="ranges" role="group" aria-label="Time range">
+        <div class="ranges fx-flex fx-gap-1 fx-ml-a" role="group" aria-label="Time range">
           @for (option of ranges; track option.label) {
             <button
               type="button"
@@ -29,9 +29,9 @@ import { VolumeChart } from '../../shared/volume-chart';
         </div>
       </header>
 
-      <div class="tiles">
+      <div class="tiles fx-gap-2 fx-mb-5">
         @for (tile of tiles$ | async; track tile.label) {
-          <a class="tile" [routerLink]="tile.link" [queryParams]="tile.params">
+          <a class="tile fx-grid fx-gap-1 fx-p-3" [routerLink]="tile.link" [queryParams]="tile.params">
             <span class="label">{{ tile.label }}</span>
             <strong class="value" [class.alarming]="tile.alarming">{{ tile.value | number }}</strong>
             <span class="detail">{{ tile.detail }}</span>
@@ -39,7 +39,7 @@ import { VolumeChart } from '../../shared/volume-chart';
         }
       </div>
 
-      <div class="charts">
+      <div class="charts fx-gap-6 fx-mb-6">
         <wt-volume-chart
           [points]="(points$ | async) ?? []"
           metric="spans"
@@ -77,7 +77,7 @@ import { VolumeChart } from '../../shared/volume-chart';
             <td>{{ service.traces | number }}</td>
             <td>{{ service.logs | number }}</td>
             <td>{{ service.lastSeen | date: 'medium' }}</td>
-            <td class="links">
+            <td class="fx-flex fx-gap-3">
               <a [routerLink]="['/traces']" [queryParams]="{ service: service.ServiceName }">traces</a>
               <a [routerLink]="['/logs']" [queryParams]="{ service: service.ServiceName }">logs</a>
             </td>
@@ -89,21 +89,18 @@ import { VolumeChart } from '../../shared/volume-chart';
     </table>
   `,
   styles: `
-    .page {
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      margin-bottom: 1rem;
+    /* Only what the utility set does not express. Layout and spacing are in the
+       template; these are colour, borders, and two intrinsic grids —
+       auto-fit/minmax has no utility because the column count is decided by the
+       container rather than chosen. */
+    .tiles {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
     }
 
-    h1 {
-      margin: 0;
-    }
-
-    .ranges {
-      margin-inline-start: auto;
-      display: flex;
-      gap: 0.25rem;
+    .charts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(28rem, 1fr));
     }
 
     .ranges button.active {
@@ -111,23 +108,15 @@ import { VolumeChart } from '../../shared/volume-chart';
       color: var(--text);
     }
 
-    .tiles {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-      gap: 0.75rem;
-      margin-bottom: 1.25rem;
-    }
-
     .tile {
-      display: grid;
-      gap: 0.15rem;
-      padding: 0.75rem 0.9rem;
       border: 1px solid var(--line);
       border-radius: 10px;
       background: var(--surface);
       color: inherit;
       text-decoration: none;
-      transition: border-color 0.12s ease, background 0.12s ease;
+      transition:
+        border-color 0.12s ease,
+        background 0.12s ease;
     }
 
     .tile:hover,
@@ -138,11 +127,11 @@ import { VolumeChart } from '../../shared/volume-chart';
 
     .tile .label {
       color: var(--text-dim);
-      font-size: 0.8rem;
+      font-size: var(--fx-typography--1);
     }
 
     .tile .value {
-      font-size: 1.6rem;
+      font-size: var(--fx-typography-4);
       font-weight: 600;
       font-variant-numeric: tabular-nums;
       line-height: 1.1;
@@ -154,35 +143,11 @@ import { VolumeChart } from '../../shared/volume-chart';
 
     .tile .detail {
       color: var(--text-dim);
-      font-size: 0.75rem;
-    }
-
-    .charts {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(28rem, 1fr));
-      gap: 1.5rem 2rem;
-      margin-bottom: 1.75rem;
-    }
-
-    .links {
-      display: flex;
-      gap: 0.75rem;
+      font-size: var(--fx-typography--2);
     }
 
     .hint {
       color: var(--text-dim);
-    }
-
-    .error {
-      color: var(--error);
-    }
-
-    .sr-only {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
     }
   `,
 })

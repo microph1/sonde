@@ -8,27 +8,30 @@ import { Auth } from './core/auth';
   imports: [RouterOutlet, RouterLink, RouterLinkActive],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <header class="shell-header">
+    <header class="shell-header fx-flex fx-items-center fx-gap-6 fx-px-5 fx-py-3">
       <a class="brand" routerLink="/services">the<span>·</span>watchers</a>
-      <nav aria-label="Sections">
+
+      <nav class="fx-flex fx-gap-1" aria-label="Sections">
         <a routerLink="/services" routerLinkActive="active">Services</a>
         <a routerLink="/traces" routerLinkActive="active">Traces</a>
         <a routerLink="/logs" routerLinkActive="active">Logs</a>
       </nav>
 
       @if (auth.user(); as user) {
-        <div class="account">
-          <span class="who">{{ user.email || user.name }}</span>
+        <div class="account fx-flex fx-items-center fx-gap-3 fx-ml-a">
+          <span class="dim">{{ user.email || user.name }}</span>
           <button type="button" (click)="auth.logout()">Sign out</button>
         </div>
       }
     </header>
 
-    <main>
+    <main class="fx-flex-grow-1 fx-p-5">
       <router-outlet />
     </main>
   `,
   styles: `
+    /* Only what the utilities do not express: colour, borders and the two
+       bespoke shapes in the header. Layout lives in the template. */
     :host {
       display: flex;
       flex-direction: column;
@@ -36,10 +39,6 @@ import { Auth } from './core/auth';
     }
 
     .shell-header {
-      display: flex;
-      align-items: center;
-      gap: 2rem;
-      padding: 0.75rem 1.5rem;
       border-bottom: 1px solid var(--line);
       background: var(--surface);
     }
@@ -55,42 +54,17 @@ import { Auth } from './core/auth';
       color: var(--accent);
     }
 
-    nav {
-      display: flex;
-      gap: 0.25rem;
-    }
-
     nav a {
-      padding: 0.35rem 0.75rem;
+      padding: var(--fx-3xs) var(--fx-2xs);
       border-radius: 6px;
       color: var(--text-dim);
       text-decoration: none;
     }
 
-    nav a:hover {
-      color: var(--text);
-      background: var(--surface-raised);
-    }
-
+    nav a:hover,
     nav a.active {
       color: var(--text);
       background: var(--surface-raised);
-    }
-
-    main {
-      flex: 1;
-      padding: 1.5rem;
-    }
-
-    .account {
-      margin-inline-start: auto;
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-    }
-
-    .who {
-      color: var(--text-dim);
     }
   `,
 })

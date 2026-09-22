@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { Effect, Reduce, Store, makeStore } from '@microphi/store';
-import { Observable, from, of, tap } from 'rxjs';
+import { Observable, from, map, of, tap } from 'rxjs';
 
 import { Telemetry } from './telemetry';
 import { ServiceSummary, VolumePoint } from './telemetry.model';
@@ -70,7 +70,9 @@ export class ServicesStore
 
   @Effect()
   loadVolume(range: Range): Observable<VolumePoint[]> {
-    return from(this.telemetry.timeseries(range.windowMinutes, range.bucketSeconds));
+    return from(this.telemetry.timeseries(range.windowMinutes, range.bucketSeconds)).pipe(
+      map((points) => densify(points, range)),
+    );
   }
 
   /**
@@ -126,4 +128,55 @@ function persistRange(range: Range): void {
   } catch {
     // As above: best effort.
   }
+}
+
+/**
+ * Fills in the buckets ClickHouse had nothing to report for.
+ *
+ * The query returns only buckets that contain rows, so a quiet night comes back
+ * as a handful of points — and a chart that plots by position would draw them
+ * evenly across the window, turning fifteen minutes of traffic into a shape
+ * that looks like a day of it. Every service gets a value at every bucket, so
+ * position means time and a gap reads as zero rather than as a straight line
+ * between two distant points.
+ */
+export function densify(points: VolumePoint[], range: Range): VolumePoint[] {
+  if (points.length === 0) {
+    return points;
+  }
+
+  const stepMs = range.bucketSeconds * 1000;
+  // Align to the same boundaries ClickHouse used, so filled buckets land on the
+  // grid rather than beside it.
+  const last = Math.floor(Date.now() / stepMs) * stepMs;
+  const first = last - range.windowMinutes * 60 * 1000;
+
+  const services = [...new Set(points.map((point) => point.ServiceName))];
+  const byKey = new Map(points.map((point) => [`${point.bucket}|${point.ServiceName}`, point]));
+
+  const dense: VolumePoint[] = [];
+
+  for (let time = first; time <= last; time += stepMs) {
+    const bucket = clickHouseTime(time);
+
+    for (const service of services) {
+      dense.push(
+        byKey.get(`${bucket}|${service}`) ?? {
+          bucket,
+          ServiceName: service,
+          spans: 0,
+          logs: 0,
+          errors: 0,
+        },
+      );
+    }
+  }
+
+  return dense;
+}
+
+/** ClickHouse renders its buckets as `YYYY-MM-DD hh:mm:ss` in UTC; generated
+ * buckets have to match that exactly to line up with the ones it returned. */
+function clickHouseTime(epochMs: number): string {
+  return new Date(epochMs).toISOString().replace('T', ' ').slice(0, 19);
 }

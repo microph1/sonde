@@ -21,17 +21,17 @@ interface WaterfallRow {
   template: `
     <h1>Trace <span class="mono">{{ traceId() }}</span></h1>
 
-    <p class="status" aria-live="polite">
+    <p class="status fx-flex fx-items-center fx-gap-2" aria-live="polite">
       {{ (spans$ | async)?.length ?? 0 }} spans{{ (loading$ | async) ? ' — streaming…' : '' }}
       @if (total$ | async; as ns) {
         · {{ ns | duration }} total
       }
     </p>
 
-    <ol class="waterfall">
+    <ol class="waterfall fx-m-0 fx-p-0">
       @for (row of waterfall$ | async; track row.span.SpanId) {
         <li [style.--depth]="row.depth">
-          <div class="label" [title]="row.span.SpanName">
+          <div class="label fx-flex fx-gap-2" [title]="row.span.SpanName">
             <span class="service mono">{{ row.span.ServiceName }}</span>
             <span class="name">{{ row.span.SpanName }}</span>
           </div>
@@ -43,7 +43,7 @@ interface WaterfallRow {
               [style.width.%]="row.width"
             ></div>
           </div>
-          <div class="meta">
+          <div class="meta fx-flex fx-gap-3 fx-flex-justify-end">
             <span class="num">{{ row.span.Duration | duration }}</span>
             <span [class]="'status-' + row.span.StatusCode">{{ row.span.StatusCode }}</span>
             <span class="dim">{{ row.span.Timestamp | date: 'HH:mm:ss.SSS' }}</span>
@@ -59,8 +59,6 @@ interface WaterfallRow {
   styles: `
     .waterfall {
       list-style: none;
-      margin: 0;
-      padding: 0;
     }
 
     .waterfall li {
@@ -73,10 +71,8 @@ interface WaterfallRow {
     }
 
     .label {
-      display: flex;
-      gap: 0.5rem;
       min-width: 0;
-      padding-inline-start: calc(var(--depth, 0) * 1rem);
+      padding-inline-start: calc(var(--depth, 0) * var(--fx-s));
     }
 
     .service {
@@ -108,9 +104,6 @@ interface WaterfallRow {
     }
 
     .meta {
-      display: flex;
-      gap: 0.75rem;
-      justify-content: end;
       color: var(--text-dim);
     }
 
@@ -119,10 +112,10 @@ interface WaterfallRow {
       color: var(--text);
     }
 
-    .status { color: var(--text-dim); }
-    .error { color: var(--error); }
-    .hint { color: var(--text-dim); }
-    .dim { color: var(--text-dim); }
+    .status,
+    .hint {
+      color: var(--text-dim);
+    }
   `,
 })
 export class TraceDetail implements OnInit {

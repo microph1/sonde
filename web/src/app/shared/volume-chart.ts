@@ -37,7 +37,7 @@ const LABEL_CHARS = 17;
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <figure>
-      <figcaption>
+      <figcaption class="fx-flex fx-items-baseline fx-gap-2 fx-mb-1">
         <h2>{{ title() }}</h2>
         <span class="unit">{{ unit() }}</span>
       </figcaption>
@@ -111,9 +111,9 @@ const LABEL_CHARS = 17;
           </div>
         }
 
-        <ul class="legend">
+        <ul class="legend fx-flex fx-flex-wrap fx-gap-3 fx-m-0 fx-p-0 fx-mt-2">
           @for (line of series(); track line.name) {
-            <li><span class="swatch" [style.background]="line.color"></span>{{ line.name }}</li>
+            <li class="fx-flex fx-items-center fx-gap-1"><span class="swatch" [style.background]="line.color"></span>{{ line.name }}</li>
           }
         </ul>
       }
@@ -123,13 +123,6 @@ const LABEL_CHARS = 17;
     figure {
       margin: 0;
       position: relative;
-    }
-
-    figcaption {
-      display: flex;
-      align-items: baseline;
-      gap: 0.5rem;
-      margin-bottom: 0.25rem;
     }
 
     h2 {
@@ -210,20 +203,9 @@ const LABEL_CHARS = 17;
     }
 
     .legend {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.75rem;
-      margin: 0.5rem 0 0;
-      padding: 0;
       list-style: none;
       color: var(--text-dim);
-      font-size: 0.8rem;
-    }
-
-    .legend li {
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
+      font-size: var(--fx-typography--1);
     }
 
     .swatch {
