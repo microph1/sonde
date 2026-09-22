@@ -18,6 +18,9 @@ pub struct Config {
     pub cors_origins: Vec<String>,
     pub clickhouse: ClickHouseConfig,
     pub kafka: KafkaConfig,
+    pub ingest_auth: IngestAuth,
+    /// How often the receiver re-reads the key table.
+    pub key_refresh_seconds: u64,
 }
 
 /// Which half of the pipeline this process runs. Splitting them is what lets
@@ -80,6 +83,8 @@ impl Config {
             cors_origins: csv_env("WATCHERS_HTTP_CORS_ORIGINS"),
             clickhouse: ClickHouseConfig::from_env()?,
             kafka: KafkaConfig::from_env()?,
+            ingest_auth: parse_env("WATCHERS_INGEST_AUTH", "off")?,
+            key_refresh_seconds: parse_env("WATCHERS_KEY_REFRESH_SECONDS", "30")?,
         })
     }
 }
@@ -209,5 +214,25 @@ mod tests {
         );
         assert_eq!("log".parse::<Backend>().unwrap(), Backend::Log);
         assert!("postgres".parse::<Backend>().is_err());
+    }
+}
+
+/// Ingest authentication. Off by default so an existing deployment keeps
+/// working after an upgrade; the receiver says so loudly at startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IngestAuth {
+    Off,
+    Required,
+}
+
+impl FromStr for IngestAuth {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> anyhow::Result<Self> {
+        match value {
+            "off" => Ok(Self::Off),
+            "required" => Ok(Self::Required),
+            other => bail!("expected `off` or `required`, got `{other}`"),
+        }
     }
 }

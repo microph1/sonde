@@ -27,7 +27,7 @@ async fn exports_spans_over_grpc_and_shuts_down() {
     let sink = Arc::new(LoggingSink::default());
     let shutdown = CancellationToken::new();
 
-    let server = tokio::spawn(grpc::serve(addr, sink.clone(), shutdown.clone()));
+    let server = tokio::spawn(grpc::serve(addr, sink.clone(), None, shutdown.clone()));
 
     let mut client = connect(addr).await;
     let response = client

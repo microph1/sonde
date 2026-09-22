@@ -19,7 +19,9 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer};
 use tower_http::decompression::RequestDecompressionLayer;
 
+use crate::ingest_auth::{ApiKeys, App, bearer};
 use crate::sink::{Sink, SinkError};
+use crate::stamp;
 
 /// Batches routinely exceed axum's 2 MiB default; the OTLP spec sets no limit,
 /// so this is a guard against a runaway exporter rather than a protocol bound.
@@ -31,10 +33,11 @@ const JSON: &str = "application/json";
 pub async fn serve(
     addr: SocketAddr,
     sink: Arc<dyn Sink>,
+    keys: Option<Arc<ApiKeys>>,
     cors_origins: &[String],
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
-    let app = router(sink, cors_origins)?;
+    let app = router(sink, keys, cors_origins)?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     tracing::info!(%addr, "otlp/http listening");
@@ -46,7 +49,19 @@ pub async fn serve(
     Ok(())
 }
 
-pub fn router(sink: Arc<dyn Sink>, cors_origins: &[String]) -> anyhow::Result<Router> {
+/// Both the sink and the key set travel as state, so a handler can authenticate
+/// without reaching for a global.
+#[derive(Clone)]
+struct Ingest {
+    sink: Arc<dyn Sink>,
+    keys: Option<Arc<ApiKeys>>,
+}
+
+pub fn router(
+    sink: Arc<dyn Sink>,
+    keys: Option<Arc<ApiKeys>>,
+    cors_origins: &[String],
+) -> anyhow::Result<Router> {
     let router = Router::new()
         .route("/v1/traces", post(export_traces))
         .route("/v1/metrics", post(export_metrics))
@@ -60,7 +75,7 @@ pub fn router(sink: Arc<dyn Sink>, cors_origins: &[String]) -> anyhow::Result<Ro
         None => router,
     };
 
-    Ok(router.with_state(sink))
+    Ok(router.with_state(Ingest { sink, keys }))
 }
 
 /// Browsers exporting OTLP directly send `Content-Type: application/json`,
@@ -99,33 +114,51 @@ fn cors(origins: &[String]) -> anyhow::Result<Option<CorsLayer>> {
 }
 
 async fn export_traces(
-    State(sink): State<Arc<dyn Sink>>,
+    State(ingest): State<Ingest>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
     let encoding = Encoding::from_headers(&headers)?;
-    let request: ExportTraceServiceRequest = encoding.decode(&body)?;
-    Ok(encoding.encode(sink.export_traces(request).await?))
+    let app = authenticate(&ingest.keys, &headers).await?;
+    let mut request: ExportTraceServiceRequest = encoding.decode(&body)?;
+
+    if let Some(app) = &app {
+        stamp::traces(&mut request, app);
+    }
+
+    Ok(encoding.encode(ingest.sink.export_traces(request).await?))
 }
 
 async fn export_metrics(
-    State(sink): State<Arc<dyn Sink>>,
+    State(ingest): State<Ingest>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
     let encoding = Encoding::from_headers(&headers)?;
-    let request: ExportMetricsServiceRequest = encoding.decode(&body)?;
-    Ok(encoding.encode(sink.export_metrics(request).await?))
+    let app = authenticate(&ingest.keys, &headers).await?;
+    let mut request: ExportMetricsServiceRequest = encoding.decode(&body)?;
+
+    if let Some(app) = &app {
+        stamp::metrics(&mut request, app);
+    }
+
+    Ok(encoding.encode(ingest.sink.export_metrics(request).await?))
 }
 
 async fn export_logs(
-    State(sink): State<Arc<dyn Sink>>,
+    State(ingest): State<Ingest>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
     let encoding = Encoding::from_headers(&headers)?;
-    let request: ExportLogsServiceRequest = encoding.decode(&body)?;
-    Ok(encoding.encode(sink.export_logs(request).await?))
+    let app = authenticate(&ingest.keys, &headers).await?;
+    let mut request: ExportLogsServiceRequest = encoding.decode(&body)?;
+
+    if let Some(app) = &app {
+        stamp::logs(&mut request, app);
+    }
+
+    Ok(encoding.encode(ingest.sink.export_logs(request).await?))
 }
 
 /// OTLP/HTTP carries either binary protobuf or the protobuf JSON mapping, and
@@ -173,6 +206,8 @@ impl Encoding {
 
 #[derive(Debug, thiserror::Error)]
 enum ApiError {
+    #[error("{0}")]
+    Unauthorized(&'static str),
     #[error("unsupported content type: {0}")]
     UnsupportedMediaType(String),
     #[error("malformed payload: {0}")]
@@ -200,12 +235,44 @@ impl IntoResponse for ApiError {
         let status = match self {
             // 400 and 415 tell the exporter the batch is unsalvageable; 503 is
             // the only one it should retry.
+            Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             Self::UnsupportedMediaType(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::Malformed(_) => StatusCode::BAD_REQUEST,
             Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         };
         (status, self.to_string()).into_response()
+    }
+}
+
+/// Authenticates a batch and returns the app it belongs to.
+///
+/// `None` means ingest auth is off, in which case nothing is stamped — an
+/// unauthenticated batch has no app to attribute it to, and inventing one would
+/// be worse than leaving the dimension empty.
+async fn authenticate(
+    keys: &Option<Arc<ApiKeys>>,
+    headers: &HeaderMap,
+) -> Result<Option<App>, ApiError> {
+    let Some(keys) = keys else {
+        return Ok(None);
+    };
+
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .map(bearer);
+
+    let origin = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok());
+
+    match keys.authenticate(token, origin).await {
+        Ok(app) => Ok(Some(app)),
+        Err(rejection) => {
+            tracing::warn!(reason = rejection.message(), "rejected batch");
+            Err(ApiError::Unauthorized(rejection.message()))
+        }
     }
 }
 
@@ -220,12 +287,12 @@ mod tests {
     use super::*;
 
     fn app() -> Router {
-        router(Arc::new(LoggingSink::default()), &[]).unwrap()
+        router(Arc::new(LoggingSink::default()), None, &[]).unwrap()
     }
 
     fn app_with_cors(origins: &[&str]) -> Router {
         let origins: Vec<String> = origins.iter().map(|o| o.to_string()).collect();
-        router(Arc::new(LoggingSink::default()), &origins).unwrap()
+        router(Arc::new(LoggingSink::default()), None, &origins).unwrap()
     }
 
     /// What a browser OTLP exporter actually sends before its first export.
@@ -300,7 +367,7 @@ mod tests {
     #[test]
     fn a_malformed_origin_is_rejected_at_startup() {
         let bad = vec!["http://\u{7f}bad".to_owned()];
-        assert!(router(Arc::new(LoggingSink::default()), &bad).is_err());
+        assert!(router(Arc::new(LoggingSink::default()), None, &bad).is_err());
     }
 
     #[test]

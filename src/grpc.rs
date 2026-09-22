@@ -19,11 +19,39 @@ use tokio_util::sync::CancellationToken;
 use tonic::codec::CompressionEncoding;
 use tonic::{Request, Response, Status, transport::Server};
 
+use crate::ingest_auth::{ApiKeys, App, bearer};
 use crate::sink::{Sink, SinkError};
+use crate::stamp;
 
 #[derive(Clone)]
 struct GrpcReceiver {
     sink: Arc<dyn Sink>,
+    keys: Option<Arc<ApiKeys>>,
+}
+
+impl GrpcReceiver {
+    /// gRPC carries the credential in metadata rather than a header, and has no
+    /// Origin — a browser cannot speak OTLP/gRPC, so only secret keys arrive
+    /// here.
+    async fn authenticate<T>(&self, request: &Request<T>) -> Result<Option<App>, Status> {
+        let Some(keys) = &self.keys else {
+            return Ok(None);
+        };
+
+        let token = request
+            .metadata()
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .map(bearer);
+
+        match keys.authenticate(token, None).await {
+            Ok(app) => Ok(Some(app)),
+            Err(rejection) => {
+                tracing::warn!(reason = rejection.message(), "rejected batch");
+                Err(Status::unauthenticated(rejection.message()))
+            }
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -32,8 +60,15 @@ impl TraceService for GrpcReceiver {
         &self,
         request: Request<ExportTraceServiceRequest>,
     ) -> Result<Response<ExportTraceServiceResponse>, Status> {
+        let app = self.authenticate(&request).await?;
+        let mut request = request.into_inner();
+
+        if let Some(app) = &app {
+            stamp::traces(&mut request, app);
+        }
+
         self.sink
-            .export_traces(request.into_inner())
+            .export_traces(request)
             .await
             .map(Response::new)
             .map_err(status_from)
@@ -46,8 +81,15 @@ impl MetricsService for GrpcReceiver {
         &self,
         request: Request<ExportMetricsServiceRequest>,
     ) -> Result<Response<ExportMetricsServiceResponse>, Status> {
+        let app = self.authenticate(&request).await?;
+        let mut request = request.into_inner();
+
+        if let Some(app) = &app {
+            stamp::metrics(&mut request, app);
+        }
+
         self.sink
-            .export_metrics(request.into_inner())
+            .export_metrics(request)
             .await
             .map(Response::new)
             .map_err(status_from)
@@ -60,8 +102,15 @@ impl LogsService for GrpcReceiver {
         &self,
         request: Request<ExportLogsServiceRequest>,
     ) -> Result<Response<ExportLogsServiceResponse>, Status> {
+        let app = self.authenticate(&request).await?;
+        let mut request = request.into_inner();
+
+        if let Some(app) = &app {
+            stamp::logs(&mut request, app);
+        }
+
         self.sink
-            .export_logs(request.into_inner())
+            .export_logs(request)
             .await
             .map(Response::new)
             .map_err(status_from)
@@ -83,9 +132,10 @@ fn status_from(error: SinkError) -> Status {
 pub async fn serve(
     addr: SocketAddr,
     sink: Arc<dyn Sink>,
+    keys: Option<Arc<ApiKeys>>,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
-    let receiver = GrpcReceiver { sink };
+    let receiver = GrpcReceiver { sink, keys };
 
     tracing::info!(%addr, "otlp/grpc listening");
     Server::builder()

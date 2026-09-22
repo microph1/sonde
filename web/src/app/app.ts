@@ -15,6 +15,7 @@ import { Auth } from './core/auth';
         <a routerLink="/services" routerLinkActive="active">Services</a>
         <a routerLink="/traces" routerLinkActive="active">Traces</a>
         <a routerLink="/logs" routerLinkActive="active">Logs</a>
+        <a routerLink="/apps" routerLinkActive="active">Apps</a>
       </nav>
 
       @if (auth.user(); as user) {

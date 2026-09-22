@@ -22,7 +22,7 @@ export class ClickHouseService {
    * are or hold them all at once.
    */
   async stream(sql: string, params: QueryParams = {}): Promise<StreamingResult> {
-    const response = await this.execute(`${sql} FORMAT JSONEachRow`, params);
+    const response = await this.request(`${sql} FORMAT JSONEachRow`, params);
 
     if (!response.body) {
       throw new Error('[502] clickhouse returned no body');
@@ -36,7 +36,7 @@ export class ClickHouseService {
    * count — where the caller wants objects rather than a pipe.
    */
   async rows<T>(sql: string, params: QueryParams = {}): Promise<T[]> {
-    const response = await this.execute(`${sql} FORMAT JSONEachRow`, params);
+    const response = await this.request(`${sql} FORMAT JSONEachRow`, params);
     const text = await response.text();
 
     return text
@@ -45,7 +45,13 @@ export class ClickHouseService {
       .map((line) => JSON.parse(line) as T);
   }
 
-  private async execute(sql: string, params: QueryParams): Promise<Response> {
+  /** For statements with nothing to read back: DDL, and the inserts that stand
+   * in for updates on the configuration tables. */
+  async execute(sql: string, params: QueryParams = {}): Promise<void> {
+    await this.request(sql, params);
+  }
+
+  private async request(sql: string, params: QueryParams): Promise<Response> {
     const url = new URL(this.config.url);
     url.searchParams.set('database', this.config.database);
 

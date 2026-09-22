@@ -8,6 +8,8 @@
 pub mod config;
 pub mod grpc;
 pub mod http;
+pub mod ingest_auth;
 pub mod sink;
+pub mod stamp;
 pub mod storage;
 pub mod stream;

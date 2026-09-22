@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
-use the_watchers::config::{Backend, Config};
+use the_watchers::config::{Backend, Config, IngestAuth};
+use the_watchers::ingest_auth::ApiKeys;
 use the_watchers::sink::{LoggingSink, Sink};
 use the_watchers::storage::clickhouse::ClickHouseSink;
 use the_watchers::stream::consumer::Consumer;
@@ -20,16 +21,19 @@ async fn main() -> anyhow::Result<()> {
 
     if config.role.runs_receivers() {
         let sink = receiver_sink(&config).await?;
+        let keys = ingest_keys(&config, &shutdown).await?;
+
         tasks.push(tokio::spawn(grpc::serve(
             config.grpc_addr,
             sink.clone(),
+            keys.clone(),
             shutdown.clone(),
         )));
         let cors_origins = config.cors_origins.clone();
         let http_addr = config.http_addr;
         let http_shutdown = shutdown.clone();
         tasks.push(tokio::spawn(async move {
-            http::serve(http_addr, sink, &cors_origins, http_shutdown).await
+            http::serve(http_addr, sink, keys, &cors_origins, http_shutdown).await
         }));
     }
 
@@ -50,6 +54,27 @@ async fn main() -> anyhow::Result<()> {
     }
 
     run_until_shutdown(tasks, shutdown).await
+}
+
+/// Loads the ingest key set, and keeps it fresh, when ingest auth is on.
+///
+/// `None` means the receiver accepts anything. That is the default so an
+/// existing deployment keeps working across an upgrade — but it is said out
+/// loud at startup, because an open ingest endpoint should never be a surprise.
+async fn ingest_keys(
+    config: &Config,
+    shutdown: &CancellationToken,
+) -> anyhow::Result<Option<Arc<ApiKeys>>> {
+    if config.ingest_auth == IngestAuth::Off {
+        tracing::warn!("ingest authentication is off: anything that can reach the port can write");
+        return Ok(None);
+    }
+
+    let keys = ApiKeys::load(&config.clickhouse, config.key_refresh_seconds).await?;
+    tokio::spawn(keys.clone().keep_fresh(shutdown.clone()));
+    tracing::info!("ingest authentication required");
+
+    Ok(Some(keys))
 }
 
 /// Where a receiver puts what it accepts: the broker when there is one, else

@@ -23,6 +23,12 @@ export const routes: Routes = [
     loadComponent: () => import('./features/trace-detail/trace-detail').then((m) => m.TraceDetail),
   },
   {
+    path: 'apps',
+    canActivate: [authGuard],
+    title: 'Apps & keys · the-watchers',
+    loadComponent: () => import('./features/apps-view/apps-view').then((m) => m.AppsView),
+  },
+  {
     path: 'logs',
     canActivate: [authGuard],
     title: 'Logs · the-watchers',

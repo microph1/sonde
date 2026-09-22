@@ -8,7 +8,7 @@ anyhow = "1.0.104"
 async-trait = "0.1.92"
 axum = "0.8.9"
 bytes = "1.12.1"
-clickhouse = "0.15.2"
+clickhouse = { version = "0.15.2", features = ["lz4"] }
 futures-util = "0.3.34"
 hex = "0.4.3"
 opentelemetry-proto = { version = "0.32.0", default-features = false, features = ["gen-tonic", "logs", "metrics", "trace", "with-serde"] }
@@ -16,6 +16,7 @@ prost = "0.14.4"
 rdkafka = { version = "0.39.0", features = ["tokio"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+sha2 = "0.11.0"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["full"] }
 tokio-util = "0.7.19"

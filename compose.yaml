@@ -66,6 +66,9 @@ services:
       # Anywhere else this should be an explicit list of origins.
       WATCHERS_HTTP_CORS_ORIGINS: "*"
       WATCHERS_KAFKA_BROKERS: redpanda:9092
+      # `required` refuses any batch without a valid app key. Off by default so
+      # an existing deployment keeps working across an upgrade.
+      WATCHERS_INGEST_AUTH: ${WATCHERS_INGEST_AUTH:-off}
       WATCHERS_CLICKHOUSE_URL: http://clickhouse:8123
       WATCHERS_CLICKHOUSE_DATABASE: otel
       WATCHERS_CLICKHOUSE_USER: watchers

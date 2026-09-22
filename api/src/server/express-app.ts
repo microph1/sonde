@@ -44,7 +44,7 @@ function register(app: Express, instance: object): void {
 
   for (const lambda of bySpecificity(getLambdaMetadataFromClass(klass) ?? [])) {
     const path = toExpressPath(`${basePath}${lambda.path}`);
-    const method = String(lambda.method).toLowerCase() as 'get' | 'post';
+    const method = String(lambda.method).toLowerCase() as 'get' | 'post' | 'delete' | 'put';
     const handler = (instance as Record<string, Handler>)[lambda.name];
 
     if (typeof handler !== 'function') {

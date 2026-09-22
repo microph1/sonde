@@ -4,6 +4,7 @@ import { LambdaDefaultHandler } from '@microgamma/apigator';
 import { DI, bootstrap, injector } from '@microphi/di';
 import { getDebugger } from '@microphi/debug';
 
+import { AppsService } from './apps/apps.service';
 import { AuthRoutes } from './auth/auth-routes';
 import { LoginStates } from './auth/login-state';
 import { Oidc } from './auth/oidc';
@@ -11,6 +12,7 @@ import { Sessions } from './auth/session';
 import { ClickHouseService } from './clickhouse/clickhouse.service';
 import { configFromEnv } from './config';
 import { LogsEndpoint } from './endpoints/logs.endpoint';
+import { AppsEndpoint } from './endpoints/apps.endpoint';
 import { ServicesEndpoint } from './endpoints/services.endpoint';
 import { TracesEndpoint } from './endpoints/traces.endpoint';
 import { createApp } from './server/express-app';
@@ -23,6 +25,8 @@ import { StreamingEventHandler } from './server/streaming.handler';
 @DI({
   providers: [
     ClickHouseService,
+    AppsService,
+    AppsEndpoint,
     Oidc,
     Sessions,
     LoginStates,
@@ -37,14 +41,23 @@ export class Api {}
 
 const d = getDebugger('watchers:api');
 
-export function start(): void {
+export async function start(): Promise<void> {
   const config = configFromEnv();
 
   bootstrap(Api);
 
+  // Apps and keys are configuration this API owns, so it creates their tables
+  // the way the receiver creates the telemetry ones.
+  await injector(AppsService).ensureSchema();
+
   const app = createApp(
     config,
-    [injector(TracesEndpoint), injector(LogsEndpoint), injector(ServicesEndpoint)],
+    [
+      injector(TracesEndpoint),
+      injector(LogsEndpoint),
+      injector(ServicesEndpoint),
+      injector(AppsEndpoint),
+    ],
     injector(AuthRoutes),
   );
 
@@ -56,5 +69,9 @@ export function start(): void {
 }
 
 if (require.main === module) {
-  start();
+  start().catch((error: unknown) => {
+    // eslint-disable-next-line no-console
+    console.error('failed to start', error);
+    process.exitCode = 1;
+  });
 }
