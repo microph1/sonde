@@ -1,8 +1,8 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal } from '@angular/core';
-import { DatePipe } from '@angular/common';
+import { ChangeDetectionStrategy, Component, OnInit, inject, input } from '@angular/core';
+import { AsyncPipe, DatePipe } from '@angular/common';
+import { map, startWith } from 'rxjs';
 
-import { RowStream } from '../../core/stream';
-import { Telemetry } from '../../core/telemetry';
+import { TracesStore } from '../../core/traces.store';
 import { Span } from '../../core/telemetry.model';
 import { DurationPipe } from '../../shared/duration-pipe';
 
@@ -16,22 +16,20 @@ interface WaterfallRow {
 
 @Component({
   selector: 'wt-trace-detail',
-  imports: [DatePipe, DurationPipe],
+  imports: [AsyncPipe, DatePipe, DurationPipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <h1>Trace <span class="mono">{{ traceId() }}</span></h1>
 
     <p class="status" aria-live="polite">
-      {{ rows().length }} spans{{ streaming() ? ' — streaming…' : '' }}
-      @if (total(); as ns) { · {{ ns | duration }} total }
+      {{ (spans$ | async)?.length ?? 0 }} spans{{ (loading$ | async) ? ' — streaming…' : '' }}
+      @if (total$ | async; as ns) {
+        · {{ ns | duration }} total
+      }
     </p>
 
-    @if (error(); as message) {
-      <p role="alert" class="error">{{ message }}</p>
-    }
-
     <ol class="waterfall">
-      @for (row of waterfall(); track row.span.SpanId) {
+      @for (row of waterfall$ | async; track row.span.SpanId) {
         <li [style.--depth]="row.depth">
           <div class="label" [title]="row.span.SpanName">
             <span class="service mono">{{ row.span.ServiceName }}</span>
@@ -52,7 +50,7 @@ interface WaterfallRow {
           </div>
         </li>
       } @empty {
-        @if (!streaming()) {
+        @if (!(loading$ | async)) {
           <li class="hint">No spans found for this trace.</li>
         }
       }
@@ -127,86 +125,79 @@ interface WaterfallRow {
     .dim { color: var(--text-dim); }
   `,
 })
-export class TraceDetail {
-  private readonly telemetry = inject(Telemetry);
+export class TraceDetail implements OnInit {
+  private readonly store = inject(TracesStore);
 
   readonly traceId = input.required<string>();
 
-  private readonly stream = signal<RowStream<Span> | null>(null);
-
-  protected readonly rows = computed(() => this.stream()?.rows() ?? []);
-  protected readonly streaming = computed(() => this.stream()?.state() === 'streaming');
-  protected readonly error = computed(() => this.stream()?.error() ?? null);
+  protected readonly spans$ = this.store.trace$;
+  protected readonly loading$ = this.store.getLoadingFor('loadTrace').pipe(startWith(false));
 
   /** Wall time from the first span's start to the last span's end. */
-  protected readonly total = computed(() => {
-    const spans = this.rows();
-
-    if (spans.length === 0) {
-      return 0;
-    }
-
-    const start = Math.min(...spans.map((span) => startOf(span)));
-    const end = Math.max(...spans.map((span) => startOf(span) + span.Duration));
-
-    return end - start;
-  });
+  protected readonly total$ = this.spans$.pipe(map(totalOf));
 
   /**
    * Parent-before-child ordering with each span positioned against the trace's
    * own timeline. Recomputed as rows arrive, so a long trace fills in rather
    * than appearing all at once.
    */
-  protected readonly waterfall = computed<WaterfallRow[]>(() => {
-    const spans = this.rows();
+  protected readonly waterfall$ = this.spans$.pipe(map(toWaterfall));
 
-    if (spans.length === 0) {
-      return [];
-    }
-
-    const origin = Math.min(...spans.map(startOf));
-    const total = this.total() || 1;
-
-    const children = new Map<string, Span[]>();
-    for (const span of spans) {
-      const siblings = children.get(span.ParentSpanId) ?? [];
-      siblings.push(span);
-      children.set(span.ParentSpanId, siblings);
-    }
-
-    const known = new Set(spans.map((span) => span.SpanId));
-    // A span whose parent is absent is a root here — true for the real root and
-    // for any span whose parent has not streamed in yet.
-    const roots = spans.filter((span) => !span.ParentSpanId || !known.has(span.ParentSpanId));
-
-    const out: WaterfallRow[] = [];
-    const visit = (span: Span, depth: number): void => {
-      out.push({
-        span,
-        depth,
-        offset: ((startOf(span) - origin) / total) * 100,
-        width: Math.max((span.Duration / total) * 100, 0.4),
-      });
-
-      for (const child of children.get(span.SpanId) ?? []) {
-        visit(child, depth + 1);
-      }
-    };
-
-    for (const root of roots.sort((a, b) => startOf(a) - startOf(b))) {
-      visit(root, 0);
-    }
-
-    return out;
-  });
-
-  constructor() {
-    effect((onCleanup) => {
-      const stream = this.telemetry.trace(this.traceId());
-      this.stream.set(stream);
-      onCleanup(() => stream.cancel());
-    });
+  ngOnInit(): void {
+    this.store.dispatch('loadTrace', this.traceId());
   }
+}
+
+function totalOf(spans: readonly Span[]): number {
+  if (spans.length === 0) {
+    return 0;
+  }
+
+  const start = Math.min(...spans.map(startOf));
+  const end = Math.max(...spans.map((span) => startOf(span) + span.Duration));
+
+  return end - start;
+}
+
+function toWaterfall(spans: readonly Span[]): WaterfallRow[] {
+  if (spans.length === 0) {
+    return [];
+  }
+
+  const origin = Math.min(...spans.map(startOf));
+  const total = totalOf(spans) || 1;
+
+  const children = new Map<string, Span[]>();
+  for (const span of spans) {
+    const siblings = children.get(span.ParentSpanId) ?? [];
+    siblings.push(span);
+    children.set(span.ParentSpanId, siblings);
+  }
+
+  const known = new Set(spans.map((span) => span.SpanId));
+  // A span whose parent is absent is a root here — true for the real root and
+  // for any span whose parent has not streamed in yet.
+  const roots = spans.filter((span) => !span.ParentSpanId || !known.has(span.ParentSpanId));
+
+  const out: WaterfallRow[] = [];
+  const visit = (span: Span, depth: number): void => {
+    out.push({
+      span,
+      depth,
+      offset: ((startOf(span) - origin) / total) * 100,
+      width: Math.max((span.Duration / total) * 100, 0.4),
+    });
+
+    for (const child of children.get(span.SpanId) ?? []) {
+      visit(child, depth + 1);
+    }
+  };
+
+  for (const root of [...roots].sort((a, b) => startOf(a) - startOf(b))) {
+    visit(root, 0);
+  }
+
+  return out;
 }
 
 /** ClickHouse renders DateTime64(9) as `YYYY-MM-DD hh:mm:ss.nnnnnnnnn`; the

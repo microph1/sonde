@@ -1,16 +1,15 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
-import { DatePipe } from '@angular/common';
+import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
+import { AsyncPipe, DatePipe } from '@angular/common';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { startWith } from 'rxjs';
 
-import { LiveStream } from '../../core/live-stream';
-import { RowStream } from '../../core/stream';
-import { Telemetry } from '../../core/telemetry';
-import { LogFilters, LogRecord } from '../../core/telemetry.model';
+import { LogsStore } from '../../core/logs.store';
+import { LogFilters } from '../../core/telemetry.model';
 
 @Component({
   selector: 'wt-logs-view',
-  imports: [ReactiveFormsModule, RouterLink, DatePipe],
+  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <h1>Logs</h1>
@@ -29,29 +28,20 @@ import { LogFilters, LogRecord } from '../../core/telemetry.model';
         </select>
       </label>
       <label>Limit <input formControlName="limit" type="number" min="1" /></label>
-      <button type="submit" [disabled]="isLive()">Search</button>
-      @if (streaming()) {
-        <button type="button" (click)="stop()">Stop</button>
-      }
-      @if (isLive()) {
-        <button type="button" (click)="stopLive()">Stop tail</button>
+      <button type="submit" [disabled]="(live$ | async) ?? false">Search</button>
+      @if ((live$ | async) === true) {
+        <button type="button" (click)="stop()">Stop tail</button>
       } @else {
         <button type="button" (click)="startLive()">Live tail</button>
       }
     </form>
 
     <p class="status" aria-live="polite">
-      @if (isLive()) {
-        <span class="pill" [class.connecting]="liveState() !== 'live'">
-          {{ liveState() === 'live' ? 'live' : 'reconnecting…' }}
-        </span>
+      @if ((live$ | async) === true) {
+        <span class="pill">live</span>
       }
-      {{ rows().length }} records{{ streaming() ? ' — streaming…' : '' }}
+      {{ (rows$ | async)?.length ?? 0 }} records{{ (searching$ | async) ? ' — streaming…' : '' }}
     </p>
-
-    @if (error(); as message) {
-      <p role="alert" class="error">{{ message }}</p>
-    }
 
     <table>
       <caption class="sr-only">Matching log records</caption>
@@ -65,7 +55,7 @@ import { LogFilters, LogRecord } from '../../core/telemetry.model';
         </tr>
       </thead>
       <tbody>
-        @for (record of rows(); track $index) {
+        @for (record of rows$ | async; track $index) {
           <tr>
             <td>{{ record.Timestamp | date: 'HH:mm:ss.SSS' }}</td>
             <td class="mono">{{ record.ServiceName }}</td>
@@ -78,7 +68,7 @@ import { LogFilters, LogRecord } from '../../core/telemetry.model';
             </td>
           </tr>
         } @empty {
-          @if (!streaming()) {
+          @if (!(searching$ | async)) {
             <tr><td colspan="5" class="hint">No records matched.</td></tr>
           }
         }
@@ -110,6 +100,11 @@ import { LogFilters, LogRecord } from '../../core/telemetry.model';
     }
 
     .status { color: var(--text-dim); display: flex; align-items: center; gap: 0.5rem; }
+    .hint { color: var(--text-dim); }
+    .sev-error { color: var(--error); }
+    .sev-warn { color: var(--warn); }
+    .sev-info { color: var(--text); }
+    .sev-debug { color: var(--text-dim); }
 
     .pill {
       display: inline-flex;
@@ -130,17 +125,6 @@ import { LogFilters, LogRecord } from '../../core/telemetry.model';
       background: currentColor;
     }
 
-    .pill.connecting {
-      background: color-mix(in srgb, var(--warn) 18%, transparent);
-      color: var(--warn);
-    }
-    .error { color: var(--error); }
-    .hint { color: var(--text-dim); }
-    .sev-error { color: var(--error); }
-    .sev-warn { color: var(--warn); }
-    .sev-info { color: var(--text); }
-    .sev-debug { color: var(--text-dim); }
-
     .sr-only {
       position: absolute;
       width: 1px;
@@ -150,65 +134,50 @@ import { LogFilters, LogRecord } from '../../core/telemetry.model';
     }
   `,
 })
-export class LogsView {
-  private readonly telemetry = inject(Telemetry);
+export class LogsView implements OnInit {
+  private readonly store = inject(LogsStore);
   private readonly route = inject(ActivatedRoute);
 
   protected readonly filters = new FormGroup({
     service: new FormControl(this.route.snapshot.queryParamMap.get('service') ?? ''),
-    contains: new FormControl(''),
-    minSeverity: new FormControl(0),
+    contains: new FormControl(this.route.snapshot.queryParamMap.get('contains') ?? ''),
+    minSeverity: new FormControl(Number(this.route.snapshot.queryParamMap.get('minSeverity') ?? 0)),
     limit: new FormControl(200),
   });
 
-  private readonly search = signal<RowStream<LogRecord> | null>(null);
-  private readonly live = signal<LiveStream<LogRecord> | null>(null);
+  protected readonly rows$ = this.store.rows$;
+  protected readonly live$ = this.store.live$;
+  protected readonly searching$ = this.store.getLoadingFor('search').pipe(startWith(false));
 
-  protected readonly isLive = computed(() => this.live() !== null);
+  ngOnInit(): void {
+    // A `live=1` query param opens straight into the tail, so a link can share
+    // "watch this" rather than "search this".
+    if (this.route.snapshot.queryParamMap.get('live') === '1') {
+      this.startLive();
+      return;
+    }
 
-  /** One list, two sources: a finite search or an open tail, never both. */
-  protected readonly rows = computed<readonly LogRecord[]>(
-    () => this.live()?.rows() ?? this.search()?.rows() ?? [],
-  );
-
-  protected readonly streaming = computed(() => this.search()?.state() === 'streaming');
-  protected readonly liveState = computed(() => this.live()?.state() ?? 'closed');
-  protected readonly error = computed(() => this.search()?.error() ?? null);
-
-  constructor() {
     this.run();
-
-    effect((onCleanup) => {
-      const current = this.search();
-      onCleanup(() => current?.cancel());
-    });
-
-    effect((onCleanup) => {
-      const current = this.live();
-      onCleanup(() => current?.close());
-    });
   }
 
   protected run(): void {
-    this.stopLive();
-    this.search.set(this.telemetry.searchLogs(this.currentFilters()));
+    this.store.dispatch('search', this.currentFilters());
   }
 
-  /** Switching to the tail cancels the search: the two would interleave rows
-   * from different time windows into one list. */
   protected startLive(): void {
-    this.search()?.cancel();
-    this.search.set(null);
-    this.live.set(this.telemetry.tailLogs(this.currentFilters()));
-  }
-
-  protected stopLive(): void {
-    this.live()?.close();
-    this.live.set(null);
+    this.store.dispatch('tail', this.currentFilters());
   }
 
   protected stop(): void {
-    this.search()?.cancel();
+    this.store.dispatch('stop');
+  }
+
+  /** OTel severity numbers: 1-4 trace, 5-8 debug, 9-12 info, 13-16 warn, 17+ error. */
+  protected severityClass(severity: number): string {
+    if (severity >= 17) return 'sev-error';
+    if (severity >= 13) return 'sev-warn';
+    if (severity >= 9) return 'sev-info';
+    return 'sev-debug';
   }
 
   private currentFilters(): LogFilters {
@@ -220,13 +189,5 @@ export class LogsView {
       minSeverity: Number(minSeverity ?? 0),
       limit: limit ?? 200,
     };
-  }
-
-  /** OTel severity numbers: 1-4 trace, 5-8 debug, 9-12 info, 13-16 warn, 17+ error. */
-  protected severityClass(severity: number): string {
-    if (severity >= 17) return 'sev-error';
-    if (severity >= 13) return 'sev-warn';
-    if (severity >= 9) return 'sev-info';
-    return 'sev-debug';
   }
 }

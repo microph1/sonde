@@ -8,12 +8,15 @@ import { Span, TraceFilters } from './telemetry.model';
 
 export interface TracesState {
   rows: Span[];
+  /** A single trace's spans, oldest first — the order a waterfall renders in. */
+  trace: Span[];
   live: boolean;
 }
 
 export interface TracesActions {
   search: (filters: TraceFilters) => Observable<Span[]>;
   tail: (filters: TraceFilters) => Observable<Span[]>;
+  loadTrace: (traceId: string) => Observable<Span[]>;
   stop: () => Observable<void>;
 }
 
@@ -39,10 +42,11 @@ export class TracesStore
   private readonly baseUrl = inject(API_BASE_URL);
 
   readonly rows$ = this.select((state) => state.rows);
+  readonly trace$ = this.select((state) => state.trace);
   readonly live$ = this.select((state) => state.live);
 
   constructor() {
-    super({ rows: [], live: false });
+    super({ rows: [], trace: [], live: false });
   }
 
   @Effect()
@@ -82,6 +86,20 @@ export class TracesStore
   @Reduce()
   onTail(state: TracesState, rows: Span[]): TracesState {
     return { ...state, rows, live: true };
+  }
+
+  @Effect()
+  loadTrace(traceId: string): Observable<Span[]> {
+    return ndjsonRows<Span>((signal) =>
+      fetch(`${this.baseUrl}/traces/${traceId}`, { credentials: 'include', signal }),
+    ).pipe(accumulate());
+  }
+
+  /** Replaces rather than merges: opening a trace is a fresh subject, and
+   * leaving the previous one behind would draw two waterfalls at once. */
+  @Reduce()
+  onLoadTrace(state: TracesState, trace: Span[]): TracesState {
+    return { ...state, trace };
   }
 
   /** Ends whichever stream is running. Dispatching any action cancels the

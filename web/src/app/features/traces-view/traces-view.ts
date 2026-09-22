@@ -152,6 +152,13 @@ export class TracesView implements OnInit {
   protected readonly searching$ = this.store.getLoadingFor('search').pipe(startWith(false));
 
   ngOnInit(): void {
+    // A `live=1` query param opens straight into the tail, so a link can share
+    // "watch this" rather than "search this".
+    if (this.route.snapshot.queryParamMap.get('live') === '1') {
+      this.startLive();
+      return;
+    }
+
     this.run();
   }
 
