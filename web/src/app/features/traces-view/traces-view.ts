@@ -1,17 +1,16 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
-import { DatePipe } from '@angular/common';
+import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
+import { AsyncPipe, DatePipe } from '@angular/common';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { startWith } from 'rxjs';
 
-import { LiveStream } from '../../core/live-stream';
-import { RowStream } from '../../core/stream';
-import { Telemetry } from '../../core/telemetry';
-import { Span, TraceFilters } from '../../core/telemetry.model';
+import { TracesStore } from '../../core/traces.store';
+import { TraceFilters } from '../../core/telemetry.model';
 import { DurationPipe } from '../../shared/duration-pipe';
 
 @Component({
   selector: 'wt-traces-view',
-  imports: [ReactiveFormsModule, RouterLink, DatePipe, DurationPipe],
+  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, DurationPipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <h1>Traces</h1>
@@ -30,29 +29,20 @@ import { DurationPipe } from '../../shared/duration-pipe';
       </label>
       <label>Slower than (ms) <input formControlName="minDurationMs" type="number" min="0" /></label>
       <label>Limit <input formControlName="limit" type="number" min="1" /></label>
-      <button type="submit" [disabled]="isLive()">Search</button>
-      @if (streaming()) {
-        <button type="button" (click)="stop()">Stop</button>
-      }
-      @if (isLive()) {
-        <button type="button" (click)="stopLive()">Stop tail</button>
+      <button type="submit" [disabled]="(live$ | async) ?? false">Search</button>
+      @if ((live$ | async) === true) {
+        <button type="button" (click)="stop()">Stop tail</button>
       } @else {
         <button type="button" (click)="startLive()">Live tail</button>
       }
     </form>
 
     <p class="status" aria-live="polite">
-      @if (isLive()) {
-        <span class="pill" [class.connecting]="liveState() !== 'live'">
-          {{ liveState() === 'live' ? 'live' : 'reconnecting…' }}
-        </span>
+      @if ((live$ | async) === true) {
+        <span class="pill">live</span>
       }
-      {{ rows().length }} spans{{ streaming() ? ' — streaming…' : '' }}
+      {{ (rows$ | async)?.length ?? 0 }} spans{{ (searching$ | async) ? ' — streaming…' : '' }}
     </p>
-
-    @if (error(); as message) {
-      <p role="alert" class="error">{{ message }}</p>
-    }
 
     <table>
       <caption class="sr-only">Matching spans</caption>
@@ -68,7 +58,7 @@ import { DurationPipe } from '../../shared/duration-pipe';
         </tr>
       </thead>
       <tbody>
-        @for (span of rows(); track span.SpanId) {
+        @for (span of rows$ | async; track span.SpanId) {
           <tr>
             <td>{{ span.Timestamp | date: 'HH:mm:ss.SSS' }}</td>
             <td class="mono">{{ span.ServiceName }}</td>
@@ -81,7 +71,7 @@ import { DurationPipe } from '../../shared/duration-pipe';
             </td>
           </tr>
         } @empty {
-          @if (!streaming()) {
+          @if (!(searching$ | async)) {
             <tr><td colspan="7" class="hint">No spans matched.</td></tr>
           }
         }
@@ -143,8 +133,8 @@ import { DurationPipe } from '../../shared/duration-pipe';
     }
   `,
 })
-export class TracesView {
-  private readonly telemetry = inject(Telemetry);
+export class TracesView implements OnInit {
+  private readonly store = inject(TracesStore);
   private readonly route = inject(ActivatedRoute);
 
   protected readonly filters = new FormGroup({
@@ -157,56 +147,24 @@ export class TracesView {
     limit: new FormControl(200),
   });
 
-  private readonly search = signal<RowStream<Span> | null>(null);
-  private readonly live = signal<LiveStream<Span> | null>(null);
+  protected readonly rows$ = this.store.rows$;
+  protected readonly live$ = this.store.live$;
+  protected readonly searching$ = this.store.getLoadingFor('search').pipe(startWith(false));
 
-  protected readonly isLive = computed(() => this.live() !== null);
-
-  /** One list, two sources: a finite search or an open tail, never both. */
-  protected readonly rows = computed<readonly Span[]>(
-    () => this.live()?.rows() ?? this.search()?.rows() ?? [],
-  );
-
-  protected readonly streaming = computed(() => this.search()?.state() === 'streaming');
-  protected readonly liveState = computed(() => this.live()?.state() ?? 'closed');
-  protected readonly error = computed(() => this.search()?.error() ?? null);
-
-  constructor() {
+  ngOnInit(): void {
     this.run();
-
-    // A new search replaces the old stream; the abandoned one is aborted so its
-    // rows stop arriving and the request stops occupying the server.
-    effect((onCleanup) => {
-      const current = this.search();
-      onCleanup(() => current?.cancel());
-    });
-
-    effect((onCleanup) => {
-      const current = this.live();
-      onCleanup(() => current?.close());
-    });
   }
 
   protected run(): void {
-    this.stopLive();
-    this.search.set(this.telemetry.searchTraces(this.currentFilters()));
+    this.store.dispatch('search', this.currentFilters());
   }
 
-  /** Switching to the tail cancels the search: the two would interleave rows
-   * from different time windows into one list. */
   protected startLive(): void {
-    this.search()?.cancel();
-    this.search.set(null);
-    this.live.set(this.telemetry.tailTraces(this.currentFilters()));
-  }
-
-  protected stopLive(): void {
-    this.live()?.close();
-    this.live.set(null);
+    this.store.dispatch('tail', this.currentFilters());
   }
 
   protected stop(): void {
-    this.search()?.cancel();
+    this.store.dispatch('stop');
   }
 
   private currentFilters(): TraceFilters {
