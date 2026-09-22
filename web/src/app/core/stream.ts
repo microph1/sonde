@@ -17,7 +17,10 @@ export interface RowStream<T> {
  * continuous. */
 const FLUSH_INTERVAL_MS = 60;
 
-export function streamRows<T>(request: (signal: AbortSignal) => Promise<Response>): RowStream<T> {
+export function streamRows<T>(
+  request: (signal: AbortSignal) => Promise<Response>,
+  onUnauthorized?: () => void,
+): RowStream<T> {
   const rows = signal<readonly T[]>([]);
   const state = signal<StreamState>('idle');
   const error = signal<string | null>(null);
@@ -50,6 +53,14 @@ export function streamRows<T>(request: (signal: AbortSignal) => Promise<Response
 
     try {
       const response = await request(controller.signal);
+
+      if (response.status === 401) {
+        // The session expired mid-session. Starting the login again is the only
+        // useful thing to do, and it is less surprising than an error banner
+        // saying the query failed.
+        onUnauthorized?.();
+        throw new Error('your session expired — signing you in again');
+      }
 
       if (!response.ok) {
         const detail = (await response.json().catch(() => null)) as { error?: string } | null;

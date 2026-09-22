@@ -2,6 +2,7 @@ name: the-watchers
 
 services:
   redpanda:
+    restart: unless-stopped
     image: redpandadata/redpanda:v25.2.3
     command:
       - redpanda start
@@ -24,6 +25,7 @@ services:
       start_period: 10s
 
   clickhouse:
+    restart: unless-stopped
     image: clickhouse/clickhouse-server:25.8
     environment:
       CLICKHOUSE_DB: otel
@@ -49,6 +51,7 @@ services:
 
   # Terminates OTLP and publishes to Redpanda. Scale this on request rate.
   receiver:
+    restart: unless-stopped
     build: .
     image: the-watchers:local
     depends_on:
@@ -75,6 +78,7 @@ services:
   # Drains Redpanda into ClickHouse. Scale this on write throughput; the
   # consumer group divides the partitions between replicas.
   consumer:
+    restart: unless-stopped
     # Same image as the receiver; only the role differs. Naming it here rather
     # than repeating `build:` keeps compose from building the context twice.
     image: the-watchers:local
@@ -87,6 +91,30 @@ services:
       <<: *watchers-env
       WATCHERS_ROLE: consumer
 
+  # Identity provider for the read API and the console.
+  #
+  # Deliberately in this stack rather than in the cloud: the login path of an
+  # observability tool should not depend on a service that can be down at the
+  # same moment you need to look at why something is down.
+  dex:
+    restart: unless-stopped
+    image: dexidp/dex:v2.44.0
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    environment:
+      WATCHERS_OIDC_CLIENT_SECRET: ${WATCHERS_OIDC_CLIENT_SECRET:-dev-client-secret}
+    volumes:
+      - ./dex/config.yaml:/etc/dex/config.yaml:ro
+      - dex-data:/var/dex
+    ports:
+      - "${DEX_PORT:-5556}:5556"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5556/dex/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
 volumes:
   clickhouse-data:
   redpanda-data:
+  dex-data:

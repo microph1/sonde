@@ -2,17 +2,27 @@ import { getEndpointMetadataFromClass, getLambdaMetadataFromClass } from '@micro
 import { getDebugger } from '@microphi/debug';
 import express, { Express, NextFunction, Request, Response } from 'express';
 
+import { AuthRoutes } from '../auth/auth-routes';
 import { ApiConfig } from '../config';
 
 const d = getDebugger('watchers:api:routes');
 
 type Handler = (req: Request, res: Response) => unknown;
 
-export function createApp(config: ApiConfig, endpoints: object[]): Express {
+export function createApp(config: ApiConfig, endpoints: object[], auth: AuthRoutes): Express {
   const app = express();
 
   app.use(express.json({ limit: '1mb' }));
   app.use(cors(config.corsOrigins));
+
+  // Order matters: the login routes must exist before the guard, and the guard
+  // must run before anything that reads telemetry.
+  auth.mount(app);
+  app.use(auth.guard());
+
+  if (!config.auth.enabled) {
+    d('auth disabled — every telemetry route is open');
+  }
 
   for (const endpoint of endpoints) {
     register(app, endpoint);

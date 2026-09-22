@@ -4,6 +4,10 @@ import { LambdaDefaultHandler } from '@microgamma/apigator';
 import { DI, bootstrap, injector } from '@microphi/di';
 import { getDebugger } from '@microphi/debug';
 
+import { AuthRoutes } from './auth/auth-routes';
+import { LoginStates } from './auth/login-state';
+import { Oidc } from './auth/oidc';
+import { Sessions } from './auth/session';
 import { ClickHouseService } from './clickhouse/clickhouse.service';
 import { configFromEnv } from './config';
 import { LogsEndpoint } from './endpoints/logs.endpoint';
@@ -19,6 +23,10 @@ import { StreamingEventHandler } from './server/streaming.handler';
 @DI({
   providers: [
     ClickHouseService,
+    Oidc,
+    Sessions,
+    LoginStates,
+    AuthRoutes,
     TracesEndpoint,
     LogsEndpoint,
     ServicesEndpoint,
@@ -34,11 +42,11 @@ export function start(): void {
 
   bootstrap(Api);
 
-  const app = createApp(config, [
-    injector(TracesEndpoint),
-    injector(LogsEndpoint),
-    injector(ServicesEndpoint),
-  ]);
+  const app = createApp(
+    config,
+    [injector(TracesEndpoint), injector(LogsEndpoint), injector(ServicesEndpoint)],
+    injector(AuthRoutes),
+  );
 
   app.listen(config.port, () => {
     // eslint-disable-next-line no-console

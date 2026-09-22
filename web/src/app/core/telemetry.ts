@@ -2,6 +2,7 @@ import { Injectable, inject } from '@angular/core';
 
 import { API_BASE_URL } from './api-base-url';
 import { LiveStream, liveStream } from './live-stream';
+import { Auth } from './auth';
 import { RowStream, streamRows } from './stream';
 import { LogFilters, LogRecord, ServiceSummary, Span, TraceFilters } from './telemetry.model';
 
@@ -15,6 +16,11 @@ import { LogFilters, LogRecord, ServiceSummary, Span, TraceFilters } from './tel
 @Injectable({ providedIn: 'root' })
 export class Telemetry {
   private readonly baseUrl = inject(API_BASE_URL);
+  private readonly auth = inject(Auth);
+
+  /** Handed to every stream so an expired session restarts the login rather
+   * than surfacing as a failed query. */
+  private readonly reauthenticate = () => this.auth.login();
 
   async services(): Promise<ServiceSummary[]> {
     const response = await fetch(`${this.baseUrl}/services`);
@@ -35,17 +41,21 @@ export class Telemetry {
   }
 
   trace(traceId: string): RowStream<Span> {
-    return streamRows<Span>((signal) => fetch(`${this.baseUrl}/traces/${traceId}`, { signal }));
+    return streamRows<Span>(
+      (signal) =>
+        fetch(`${this.baseUrl}/traces/${traceId}`, { signal, credentials: 'include' }),
+      this.reauthenticate,
+    );
   }
 
   /** Live tail of logs matching the filters, as server-sent events. */
   tailLogs(filters: LogFilters): LiveStream<LogRecord> {
-    return liveStream<LogRecord>(this.tailUrl("/logs/tail", filters));
+    return liveStream<LogRecord>(this.tailUrl('/logs/tail', filters), this.reauthenticate);
   }
 
   /** Live tail of spans matching the filters, as server-sent events. */
   tailTraces(filters: TraceFilters): LiveStream<Span> {
-    return liveStream<Span>(this.tailUrl("/traces/tail", filters));
+    return liveStream<Span>(this.tailUrl('/traces/tail', filters), this.reauthenticate);
   }
 
   /** An EventSource can only issue a GET, so a tail carries its filters in the
@@ -71,7 +81,9 @@ export class Telemetry {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(filters),
         signal,
+        credentials: 'include',
       }),
+      this.reauthenticate,
     );
   }
 }

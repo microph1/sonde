@@ -84,7 +84,7 @@ async fn run_until_shutdown(
     let mut tasks = futures_util::future::select_all(tasks.into_iter().map(Box::pin));
 
     let result = tokio::select! {
-        signal = tokio::signal::ctrl_c() => {
+        signal = shutdown_signal() => {
             signal.context("failed to listen for shutdown signal")?;
             tracing::info!("shutting down");
             shutdown.cancel();
@@ -97,6 +97,29 @@ async fn run_until_shutdown(
     };
 
     result
+}
+
+/// Resolves on ctrl-c or on `SIGTERM`.
+///
+/// `SIGTERM` is the one that matters outside a terminal: it is what `docker
+/// stop`, a systemd unit and a Kubernetes eviction all send. Listening only for
+/// ctrl-c means the graceful path never runs in production — the process is
+/// killed once the grace period expires, abandoning whatever was in flight.
+async fn shutdown_signal() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let mut terminate = signal(SignalKind::terminate())?;
+
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result,
+            _ = terminate.recv() => Ok(()),
+        }
+    }
+
+    #[cfg(not(unix))]
+    tokio::signal::ctrl_c().await
 }
 
 fn init_tracing() {

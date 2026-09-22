@@ -111,6 +111,42 @@ between replicas.
 | `WATCHERS_CLICKHOUSE_CREATE_SCHEMA` | `true` | run the DDL on start |
 | `RUST_LOG` | `the_watchers=info,warn` | |
 
+## Authentication
+
+The read API and console sit behind OIDC. Dex runs in the stack rather than in
+the cloud for the same reason the rest of it does: the login path of an
+observability tool should not depend on a service that can be down at the
+moment you need to look at why something is down.
+
+```
+browser ──▶ /api/auth/login ──▶ dex ──▶ /api/auth/callback ──▶ session cookie
+```
+
+The session is a signed JWT in an httpOnly cookie (no server-side store, so the
+API stays stateless); guarded routes answer `401` with a login URL rather than
+redirecting, because every one of them is called by `fetch` or `EventSource`.
+Everything except `/api/auth/*` and `/api/health` requires a session.
+
+Users live in `dex/config.yaml`. Dex is a federating provider, so swapping the
+static password for GitHub, Google or LDAP is a connector in that file and no
+change here. Set `WATCHERS_AUTH_DISABLED=true` to run without a provider
+locally — opt-out by design, so an unauthenticated API is never something you
+get by forgetting a variable.
+
+| Variable | Default | |
+|---|---|---|
+| `WATCHERS_OIDC_ISSUER` | `http://localhost:5556/dex` | |
+| `WATCHERS_OIDC_CLIENT_ID` | `the-watchers` | |
+| `WATCHERS_OIDC_CLIENT_SECRET` | | must match `dex/config.yaml` |
+| `WATCHERS_OIDC_REDIRECT_URI` | `http://localhost:4319/api/auth/callback` | must be registered in Dex |
+| `WATCHERS_APP_URL` | `http://localhost:4200` | where login lands |
+| `WATCHERS_SESSION_SECRET` | | signs the session cookie |
+| `WATCHERS_SESSION_HOURS` | `12` | sessions cannot be revoked early, so keep it short |
+| `WATCHERS_SECURE_COOKIES` | `false` | `true` anywhere with TLS |
+| `WATCHERS_AUTH_DISABLED` | `false` | |
+
+Ingest (4317/4318) is **not** authenticated yet.
+
 ## Storage
 
 Five tables, created on first start, partitioned by day and ordered by

@@ -1,5 +1,7 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+
+import { Auth } from './core/auth';
 
 @Component({
   selector: 'wt-root',
@@ -13,6 +15,13 @@ import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
         <a routerLink="/traces" routerLinkActive="active">Traces</a>
         <a routerLink="/logs" routerLinkActive="active">Logs</a>
       </nav>
+
+      @if (auth.user(); as user) {
+        <div class="account">
+          <span class="who">{{ user.email || user.name }}</span>
+          <button type="button" (click)="auth.logout()">Sign out</button>
+        </div>
+      }
     </header>
 
     <main>
@@ -72,6 +81,19 @@ import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
       flex: 1;
       padding: 1.5rem;
     }
+
+    .account {
+      margin-inline-start: auto;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .who {
+      color: var(--text-dim);
+    }
   `,
 })
-export class App {}
+export class App {
+  protected readonly auth = inject(Auth);
+}

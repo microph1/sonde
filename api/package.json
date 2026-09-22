@@ -16,6 +16,8 @@
     "@microphi/debug": "file:../../drugo/microphi/packages/debug",
     "@microphi/di": "file:../../drugo/microphi/packages/di",
     "express": "^5.2.1",
+    "jose": "^6.2.12",
+    "openid-client": "^6.8.8",
     "reflect-metadata": "^0.2.2"
   },
   "devDependencies": {
