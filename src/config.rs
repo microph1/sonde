@@ -76,15 +76,15 @@ pub struct ClickHouseConfig {
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
-            role: parse_env("WATCHERS_ROLE", "all")?,
-            grpc_addr: parse_env("WATCHERS_GRPC_ADDR", DEFAULT_GRPC_ADDR)?,
-            http_addr: parse_env("WATCHERS_HTTP_ADDR", DEFAULT_HTTP_ADDR)?,
-            backend: parse_env("WATCHERS_BACKEND", "clickhouse")?,
-            cors_origins: csv_env("WATCHERS_HTTP_CORS_ORIGINS"),
+            role: parse_env("SONDE_ROLE", "all")?,
+            grpc_addr: parse_env("SONDE_GRPC_ADDR", DEFAULT_GRPC_ADDR)?,
+            http_addr: parse_env("SONDE_HTTP_ADDR", DEFAULT_HTTP_ADDR)?,
+            backend: parse_env("SONDE_BACKEND", "clickhouse")?,
+            cors_origins: csv_env("SONDE_HTTP_CORS_ORIGINS"),
             clickhouse: ClickHouseConfig::from_env()?,
             kafka: KafkaConfig::from_env()?,
-            ingest_auth: parse_env("WATCHERS_INGEST_AUTH", "off")?,
-            key_refresh_seconds: parse_env("WATCHERS_KEY_REFRESH_SECONDS", "30")?,
+            ingest_auth: parse_env("SONDE_INGEST_AUTH", "off")?,
+            key_refresh_seconds: parse_env("SONDE_KEY_REFRESH_SECONDS", "30")?,
         })
     }
 }
@@ -92,12 +92,12 @@ impl Config {
 impl ClickHouseConfig {
     pub fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
-            url: env("WATCHERS_CLICKHOUSE_URL", "http://localhost:8123"),
-            database: env("WATCHERS_CLICKHOUSE_DATABASE", "otel"),
-            user: env("WATCHERS_CLICKHOUSE_USER", "default"),
-            password: env("WATCHERS_CLICKHOUSE_PASSWORD", ""),
-            ttl_days: parse_env("WATCHERS_CLICKHOUSE_TTL_DAYS", "30")?,
-            create_schema: parse_env("WATCHERS_CLICKHOUSE_CREATE_SCHEMA", "true")?,
+            url: env("SONDE_CLICKHOUSE_URL", "http://localhost:8123"),
+            database: env("SONDE_CLICKHOUSE_DATABASE", "otel"),
+            user: env("SONDE_CLICKHOUSE_USER", "default"),
+            password: env("SONDE_CLICKHOUSE_PASSWORD", ""),
+            ttl_days: parse_env("SONDE_CLICKHOUSE_TTL_DAYS", "30")?,
+            create_schema: parse_env("SONDE_CLICKHOUSE_CREATE_SCHEMA", "true")?,
         })
     }
 }
@@ -105,17 +105,17 @@ impl ClickHouseConfig {
 impl KafkaConfig {
     pub fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
-            brokers: env("WATCHERS_KAFKA_BROKERS", "localhost:9092"),
-            topic_prefix: env("WATCHERS_KAFKA_TOPIC_PREFIX", "otel"),
-            group_id: env("WATCHERS_KAFKA_GROUP_ID", "watchers"),
-            linger_ms: parse_env("WATCHERS_KAFKA_LINGER_MS", "50")?,
-            send_timeout_ms: parse_env("WATCHERS_KAFKA_SEND_TIMEOUT_MS", "10000")?,
-            max_message_bytes: parse_env("WATCHERS_KAFKA_MAX_MESSAGE_BYTES", "16777216")?,
-            batch_messages: parse_env("WATCHERS_KAFKA_BATCH_MESSAGES", "5000")?,
-            batch_wait_ms: parse_env("WATCHERS_KAFKA_BATCH_WAIT_MS", "1000")?,
-            retry_backoff_ms: parse_env("WATCHERS_KAFKA_RETRY_BACKOFF_MS", "2000")?,
-            partitions: parse_env("WATCHERS_KAFKA_PARTITIONS", "3")?,
-            replication: parse_env("WATCHERS_KAFKA_REPLICATION", "1")?,
+            brokers: env("SONDE_KAFKA_BROKERS", "localhost:9092"),
+            topic_prefix: env("SONDE_KAFKA_TOPIC_PREFIX", "otel"),
+            group_id: env("SONDE_KAFKA_GROUP_ID", "sonde"),
+            linger_ms: parse_env("SONDE_KAFKA_LINGER_MS", "50")?,
+            send_timeout_ms: parse_env("SONDE_KAFKA_SEND_TIMEOUT_MS", "10000")?,
+            max_message_bytes: parse_env("SONDE_KAFKA_MAX_MESSAGE_BYTES", "16777216")?,
+            batch_messages: parse_env("SONDE_KAFKA_BATCH_MESSAGES", "5000")?,
+            batch_wait_ms: parse_env("SONDE_KAFKA_BATCH_WAIT_MS", "1000")?,
+            retry_backoff_ms: parse_env("SONDE_KAFKA_RETRY_BACKOFF_MS", "2000")?,
+            partitions: parse_env("SONDE_KAFKA_PARTITIONS", "3")?,
+            replication: parse_env("SONDE_KAFKA_REPLICATION", "1")?,
         })
     }
 }
@@ -200,10 +200,10 @@ mod tests {
 
     #[test]
     fn rejects_garbage_addresses() {
-        unsafe { std::env::set_var("WATCHERS_TEST_ADDR", "not-an-addr") };
-        let error = parse_env::<SocketAddr>("WATCHERS_TEST_ADDR", DEFAULT_HTTP_ADDR).unwrap_err();
-        unsafe { std::env::remove_var("WATCHERS_TEST_ADDR") };
-        assert!(error.to_string().contains("WATCHERS_TEST_ADDR"));
+        unsafe { std::env::set_var("SONDE_TEST_ADDR", "not-an-addr") };
+        let error = parse_env::<SocketAddr>("SONDE_TEST_ADDR", DEFAULT_HTTP_ADDR).unwrap_err();
+        unsafe { std::env::remove_var("SONDE_TEST_ADDR") };
+        assert!(error.to_string().contains("SONDE_TEST_ADDR"));
     }
 
     #[test]

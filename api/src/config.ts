@@ -1,5 +1,5 @@
 /**
- * Configuration mirrors the receiver's WATCHERS_CLICKHOUSE_* names so a single
+ * Configuration mirrors the receiver's SONDE_CLICKHOUSE_* names so a single
  * .env drives both halves of the stack.
  */
 export interface ClickHouseConfig {
@@ -34,29 +34,29 @@ export interface ApiConfig {
 
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ApiConfig {
   return {
-    port: Number(env['WATCHERS_API_PORT'] ?? 4319),
-    corsOrigins: csv(env['WATCHERS_API_CORS_ORIGINS']),
+    port: Number(env['SONDE_API_PORT'] ?? 4319),
+    corsOrigins: csv(env['SONDE_API_CORS_ORIGINS']),
     clickhouse: {
-      url: env['WATCHERS_CLICKHOUSE_URL'] ?? 'http://localhost:8123',
-      database: env['WATCHERS_CLICKHOUSE_DATABASE'] ?? 'otel',
-      user: env['WATCHERS_CLICKHOUSE_USER'] ?? 'default',
-      password: env['WATCHERS_CLICKHOUSE_PASSWORD'] ?? '',
+      url: env['SONDE_CLICKHOUSE_URL'] ?? 'http://localhost:8123',
+      database: env['SONDE_CLICKHOUSE_DATABASE'] ?? 'otel',
+      user: env['SONDE_CLICKHOUSE_USER'] ?? 'default',
+      password: env['SONDE_CLICKHOUSE_PASSWORD'] ?? '',
     },
-    maxLimit: Number(env['WATCHERS_API_MAX_LIMIT'] ?? 10_000),
+    maxLimit: Number(env['SONDE_API_MAX_LIMIT'] ?? 10_000),
     auth: {
-      issuer: env['WATCHERS_OIDC_ISSUER'] ?? 'http://localhost:5556/dex',
-      clientId: env['WATCHERS_OIDC_CLIENT_ID'] ?? 'the-watchers',
-      clientSecret: env['WATCHERS_OIDC_CLIENT_SECRET'] ?? 'dev-client-secret',
+      issuer: env['SONDE_OIDC_ISSUER'] ?? 'http://localhost:5556/dex',
+      clientId: env['SONDE_OIDC_CLIENT_ID'] ?? 'sonde',
+      clientSecret: env['SONDE_OIDC_CLIENT_SECRET'] ?? 'dev-client-secret',
       redirectUri:
-        env['WATCHERS_OIDC_REDIRECT_URI'] ?? 'http://localhost:4319/api/auth/callback',
-      appUrl: env['WATCHERS_APP_URL'] ?? 'http://localhost:4200',
-      sessionSecret: env['WATCHERS_SESSION_SECRET'] ?? 'dev-session-secret-change-me',
-      sessionHours: Number(env['WATCHERS_SESSION_HOURS'] ?? 12),
-      secureCookies: env['WATCHERS_SECURE_COOKIES'] === 'true',
+        env['SONDE_OIDC_REDIRECT_URI'] ?? 'http://localhost:4319/api/auth/callback',
+      appUrl: env['SONDE_APP_URL'] ?? 'http://localhost:4200',
+      sessionSecret: env['SONDE_SESSION_SECRET'] ?? 'dev-session-secret-change-me',
+      sessionHours: Number(env['SONDE_SESSION_HOURS'] ?? 12),
+      secureCookies: env['SONDE_SECURE_COOKIES'] === 'true',
       // Opt-out rather than opt-in: an unauthenticated read API should be a
       // deliberate local choice, never something you get by forgetting a
       // variable in production.
-      enabled: env['WATCHERS_AUTH_DISABLED'] !== 'true',
+      enabled: env['SONDE_AUTH_DISABLED'] !== 'true',
     },
   };
 }

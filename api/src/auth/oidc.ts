@@ -5,7 +5,7 @@ import * as client from 'openid-client';
 import { configFromEnv } from '../config';
 import { SessionUser } from './session';
 
-const d = getDebugger('watchers:api:oidc');
+const d = getDebugger('sonde:api:oidc');
 
 export interface AuthorizationRequest {
   readonly url: string;
@@ -18,7 +18,7 @@ export interface AuthorizationRequest {
 /**
  * The authorization-code half of the login, against whichever OIDC provider is
  * configured. Nothing here is Dex-specific — it is all discovery-driven, so
- * pointing `WATCHERS_OIDC_ISSUER` at something else is the whole migration.
+ * pointing `SONDE_OIDC_ISSUER` at something else is the whole migration.
  */
 @Injectable()
 export class Oidc {

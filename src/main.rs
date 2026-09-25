@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
-use the_watchers::config::{Backend, Config, IngestAuth};
-use the_watchers::ingest_auth::ApiKeys;
-use the_watchers::sink::{LoggingSink, Sink};
-use the_watchers::storage::clickhouse::ClickHouseSink;
-use the_watchers::stream::consumer::Consumer;
-use the_watchers::stream::kafka::KafkaSink;
-use the_watchers::{grpc, http};
+use sonde::config::{Backend, Config, IngestAuth};
+use sonde::ingest_auth::ApiKeys;
+use sonde::sink::{LoggingSink, Sink};
+use sonde::storage::clickhouse::ClickHouseSink;
+use sonde::stream::consumer::Consumer;
+use sonde::stream::kafka::KafkaSink;
+use sonde::{grpc, http};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
     if config.role.runs_consumer() {
         if config.backend != Backend::Kafka {
             bail!(
-                "WATCHERS_ROLE includes the consumer, but WATCHERS_BACKEND is not `kafka`: \
+                "SONDE_ROLE includes the consumer, but SONDE_BACKEND is not `kafka`: \
                  there would be nothing to consume"
             );
         }
@@ -103,7 +103,7 @@ async fn run_until_shutdown(
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
     if tasks.is_empty() {
-        bail!("WATCHERS_ROLE left nothing to run");
+        bail!("SONDE_ROLE left nothing to run");
     }
 
     let mut tasks = futures_util::future::select_all(tasks.into_iter().map(Box::pin));
@@ -149,6 +149,6 @@ async fn shutdown_signal() -> std::io::Result<()> {
 
 fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "the_watchers=info,warn".into());
+        .unwrap_or_else(|_| "sonde=info,warn".into());
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }

@@ -7,7 +7,7 @@ import type { Request, Response } from 'express';
 import { SseResult, isSseResult } from '../clickhouse/sse-result';
 import { isStreamingResult } from '../clickhouse/streaming-result';
 
-const d = getDebugger('watchers:api:handler');
+const d = getDebugger('sonde:api:handler');
 
 /**
  * Adds streaming to apigator's Express handler.

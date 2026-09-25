@@ -9,7 +9,7 @@ import { Auth } from './core/auth';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <header class="shell-header fx-flex fx-items-center fx-gap-6 fx-px-5 fx-py-3">
-      <a class="brand" routerLink="/services">the<span>·</span>watchers</a>
+      <a class="brand" routerLink="/services">son<span>·</span>de</a>
 
       <nav class="fx-flex fx-gap-1" aria-label="Sections">
         <a routerLink="/services" routerLinkActive="active">Services</a>

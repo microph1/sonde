@@ -11,7 +11,7 @@ export interface SessionUser {
   readonly name: string;
 }
 
-export const SESSION_COOKIE = 'watchers_session';
+export const SESSION_COOKIE = 'sonde_session';
 
 /**
  * Sessions are a signed JWT in an httpOnly cookie rather than server-side

@@ -1,0 +1,41 @@
+# Two hosts, two jobs.
+#
+# Ingest and the console are split so they can be secured and scaled apart: the
+# ingest host takes anonymous traffic from every instrumented service, while the
+# console host is the one behind a login. Caddy takes a certificate for each
+# from Let's Encrypt and renews them unattended.
+
+# Ingest only. Nothing here reads data, so nothing here needs a session.
+{$INGEST_HOST} {
+	encode zstd gzip
+
+	handle /v1/* {
+		reverse_proxy receiver:4318
+	}
+
+	# Anything else on this host is a misdirected request, and saying so beats a
+	# 404 that looks like the endpoint moved.
+	handle {
+		respond "this host accepts OTLP at /v1/traces, /v1/metrics and /v1/logs" 404
+	}
+}
+
+# The console, its API, and the identity provider.
+{$CONSOLE_HOST} {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy api:4319
+	}
+
+	handle /dex/* {
+		reverse_proxy dex:5556
+	}
+
+	# A single-page app: unknown paths are routes, not missing files.
+	handle {
+		root * /srv/console
+		try_files {path} /index.html
+		file_server
+	}
+}

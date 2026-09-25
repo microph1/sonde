@@ -5,7 +5,7 @@ import express, { Express, NextFunction, Request, Response } from 'express';
 import { AuthRoutes } from '../auth/auth-routes';
 import { ApiConfig } from '../config';
 
-const d = getDebugger('watchers:api:routes');
+const d = getDebugger('sonde:api:routes');
 
 type Handler = (req: Request, res: Response) => unknown;
 

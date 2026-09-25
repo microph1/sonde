@@ -18,12 +18,12 @@ oauth2:
   skipApprovalScreen: true
 
 staticClients:
-  - id: the-watchers
-    name: the-watchers console
+  - id: sonde
+    name: sonde console
     # `secretEnv` rather than `secret`: Dex does not expand variables in this
     # file, so an inline ${...} would be taken literally — and the secret would
     # have to live in the repository to work at all.
-    secretEnv: WATCHERS_OIDC_CLIENT_SECRET
+    secretEnv: SONDE_OIDC_CLIENT_SECRET
     redirectURIs:
       - http://localhost:4319/api/auth/callback
 

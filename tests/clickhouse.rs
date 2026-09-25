@@ -1,6 +1,6 @@
 //! End-to-end checks against a real ClickHouse.
 //!
-//! Skipped unless `WATCHERS_TEST_CLICKHOUSE_URL` is set, because the row
+//! Skipped unless `SONDE_TEST_CLICKHOUSE_URL` is set, because the row
 //! structs are only validated against the server's own column types — the
 //! client fetches them before every insert, so a schema drift shows up here and
 //! nowhere in the unit tests.
@@ -17,9 +17,9 @@ use opentelemetry_proto::tonic::metrics::v1::{
 };
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span, Status, span};
-use the_watchers::config::ClickHouseConfig;
-use the_watchers::sink::Sink;
-use the_watchers::storage::clickhouse::{ClickHouseSink, schema};
+use sonde::config::ClickHouseConfig;
+use sonde::sink::Sink;
+use sonde::storage::clickhouse::{ClickHouseSink, schema};
 
 /// Each run gets its own database so repeated runs and parallel tests never
 /// read each other's rows.
@@ -29,14 +29,14 @@ struct TestDb {
 
 impl TestDb {
     fn new(name: &str) -> Option<Self> {
-        let url = std::env::var("WATCHERS_TEST_CLICKHOUSE_URL").ok()?;
+        let url = std::env::var("SONDE_TEST_CLICKHOUSE_URL").ok()?;
         Some(Self {
             config: ClickHouseConfig {
                 url,
-                database: format!("watchers_test_{name}"),
-                user: std::env::var("WATCHERS_TEST_CLICKHOUSE_USER")
+                database: format!("sonde_test_{name}"),
+                user: std::env::var("SONDE_TEST_CLICKHOUSE_USER")
                     .unwrap_or_else(|_| "default".into()),
-                password: std::env::var("WATCHERS_TEST_CLICKHOUSE_PASSWORD").unwrap_or_default(),
+                password: std::env::var("SONDE_TEST_CLICKHOUSE_PASSWORD").unwrap_or_default(),
                 // Retention off: the fixtures use fixed 2023 timestamps, which any
                 // live TTL would expire between the insert and the assertions.
                 ttl_days: 0,
@@ -89,7 +89,7 @@ macro_rules! require_clickhouse {
         match TestDb::new($name) {
             Some(db) => db,
             None => {
-                eprintln!("skipping: WATCHERS_TEST_CLICKHOUSE_URL is not set");
+                eprintln!("skipping: SONDE_TEST_CLICKHOUSE_URL is not set");
                 return;
             }
         }

@@ -7,7 +7,7 @@ import { LoginStates } from './login-state';
 import { Oidc } from './oidc';
 import { Sessions } from './session';
 
-const d = getDebugger('watchers:api:auth');
+const d = getDebugger('sonde:api:auth');
 
 /**
  * The login flow, mounted as plain Express routes rather than as an apigator

@@ -1,0 +1,121 @@
+name: sonde
+
+# Production shape, deliberately smaller than the development stack.
+#
+# No Redpanda: it wants a gigabyte to itself, which on a 2 GB box is most of the
+# machine. `SONDE_BACKEND=clickhouse` has the receiver write straight to
+# storage instead. What that costs is replay after a schema change and the
+# buffer that covers a ClickHouse restart — worth it at this volume, not worth
+# it at ten times the volume.
+#
+# Everything stateful lives on the mounted data volume, so the root disk holds
+# only the OS.
+
+services:
+  clickhouse:
+    restart: unless-stopped
+    image: clickhouse/clickhouse-server:25.8
+    environment:
+      CLICKHOUSE_DB: otel
+      CLICKHOUSE_USER: sonde
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - /srv/sonde/clickhouse:/var/lib/clickhouse
+      - ./clickhouse-limits.xml:/etc/clickhouse-server/config.d/limits.xml:ro
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
+  dex:
+    restart: unless-stopped
+    image: dexidp/dex:v2.44.0
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    environment:
+      SONDE_OIDC_CLIENT_SECRET: ${SONDE_OIDC_CLIENT_SECRET:?set SONDE_OIDC_CLIENT_SECRET}
+    volumes:
+      - ./dex.yaml:/etc/dex/config.yaml:ro
+      - /srv/sonde/dex:/var/dex
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5556/dex/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+
+  # One process for both halves: with no broker there is nothing to scale
+  # independently, and a second container would cost memory this box does not
+  # have.
+  receiver:
+    restart: unless-stopped
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: sonde:local
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      SONDE_ROLE: receiver
+      SONDE_BACKEND: clickhouse
+      SONDE_GRPC_ADDR: 0.0.0.0:4317
+      SONDE_HTTP_ADDR: 0.0.0.0:4318
+      SONDE_INGEST_AUTH: ${SONDE_INGEST_AUTH:-required}
+      # Ingest and the console are different origins now, so a browser exporter
+      # is making a cross-origin request and CORS is load-bearing again. List
+      # every origin that exports from a browser.
+      SONDE_HTTP_CORS_ORIGINS: ${SONDE_HTTP_CORS_ORIGINS:-}
+      SONDE_CLICKHOUSE_URL: http://clickhouse:8123
+      SONDE_CLICKHOUSE_DATABASE: otel
+      SONDE_CLICKHOUSE_USER: sonde
+      SONDE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      SONDE_CLICKHOUSE_TTL_DAYS: ${SONDE_CLICKHOUSE_TTL_DAYS:-30}
+      RUST_LOG: sonde=info,warn
+
+  api:
+    restart: unless-stopped
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    image: sonde-api:local
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      dex:
+        condition: service_healthy
+    environment:
+      SONDE_API_PORT: 4319
+      SONDE_CLICKHOUSE_URL: http://clickhouse:8123
+      SONDE_CLICKHOUSE_DATABASE: otel
+      SONDE_CLICKHOUSE_USER: sonde
+      SONDE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      SONDE_OIDC_ISSUER: ${CONSOLE_URL:?set CONSOLE_URL}/dex
+      SONDE_OIDC_CLIENT_SECRET: ${SONDE_OIDC_CLIENT_SECRET}
+      SONDE_OIDC_REDIRECT_URI: ${CONSOLE_URL}/api/auth/callback
+      SONDE_APP_URL: ${CONSOLE_URL}
+      SONDE_SESSION_SECRET: ${SONDE_SESSION_SECRET:?set SONDE_SESSION_SECRET}
+      SONDE_SECURE_COOKIES: ${SONDE_SECURE_COOKIES:-true}
+
+  # Two hosts: ingest takes anonymous traffic from every instrumented service,
+  # the console sits behind a login. Caddy holds a certificate for each.
+  caddy:
+    restart: unless-stopped
+    image: caddy:2-alpine
+    depends_on: [api, receiver, dex]
+    environment:
+      INGEST_HOST: ${INGEST_HOST:?set INGEST_HOST}
+      CONSOLE_HOST: ${CONSOLE_HOST:?set CONSOLE_HOST}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../web/dist/web/browser:/srv/console:ro
+      - /srv/sonde/caddy:/data
+    ports:
+      - "80:80"
+      - "443:443"
+      # OTLP/gRPC cannot share the HTTP port, so it is published directly.
+      - "4317:4317"

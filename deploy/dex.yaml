@@ -1,0 +1,22 @@
+issuer: PUBLIC_URL_PLACEHOLDER/dex
+
+storage:
+  type: sqlite3
+  config:
+    file: /var/dex/dex.db
+
+web:
+  http: 0.0.0.0:5556
+
+oauth2:
+  skipApprovalScreen: true
+
+staticClients:
+  - id: sonde
+    name: sonde console
+    secretEnv: SONDE_OIDC_CLIENT_SECRET
+    redirectURIs:
+      - PUBLIC_URL_PLACEHOLDER/api/auth/callback
+
+enablePasswordDB: true
+staticPasswords: []

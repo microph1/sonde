@@ -1,5 +1,5 @@
-export const APPS_TABLE = 'watchers_apps';
-export const KEYS_TABLE = 'watchers_api_keys';
+export const APPS_TABLE = 'sonde_apps';
+export const KEYS_TABLE = 'sonde_api_keys';
 
 /**
  * Apps and their ingest keys.

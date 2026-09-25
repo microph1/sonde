@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Context;
 use clickhouse::Client;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -18,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::ClickHouseConfig;
 
 /// The resource attribute every authenticated batch is stamped with.
-pub const APP_ATTRIBUTE: &str = "watchers.app";
+pub const APP_ATTRIBUTE: &str = "sonde.app";
 
 #[derive(Debug, Clone)]
 pub struct App {
@@ -91,9 +90,17 @@ impl ApiKeys {
             refresh_interval: Duration::from_secs(refresh_seconds.max(5)),
         });
 
-        keys.refresh()
-            .await
-            .context("failed to load ingest keys; is the API's schema created?")?;
+        // Deliberately not fatal. The API owns the key tables, so on a cold
+        // start the receiver can win the race and find nothing there — and a
+        // receiver that exits takes ingest down until something restarts it.
+        // An empty set rejects everything, which is the safe direction to fail
+        // in, and the refresh loop picks the keys up as soon as they exist.
+        if let Err(error) = keys.refresh().await {
+            tracing::warn!(
+                %error,
+                "could not load ingest keys yet; refusing all ingest until they appear"
+            );
+        }
 
         Ok(keys)
     }
@@ -119,8 +126,8 @@ impl ApiKeys {
             .query(
                 "SELECT k.secretHash AS secretHash, k.appId AS appId, a.name AS appName,
                         k.kind AS kind, k.origins AS origins
-                 FROM watchers_api_keys AS k FINAL
-                 INNER JOIN watchers_apps AS a FINAL ON a.id = k.appId
+                 FROM sonde_api_keys AS k FINAL
+                 INNER JOIN sonde_apps AS a FINAL ON a.id = k.appId
                  WHERE k.revoked = 0 AND a.deleted = 0",
             )
             .fetch_all::<KeyRow>()

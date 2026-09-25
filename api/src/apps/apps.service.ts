@@ -5,7 +5,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { ClickHouseService } from '../clickhouse/clickhouse.service';
 import { APPS_TABLE, KEYS_TABLE, statements } from './schema';
 
-const d = getDebugger('watchers:api:apps');
+const d = getDebugger('sonde:api:apps');
 
 export interface App {
   readonly id: string;

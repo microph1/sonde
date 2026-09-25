@@ -1,4 +1,4 @@
-# the-watchers
+# sonde
 
 An OTLP receiver in Rust. Accepts OpenTelemetry traces, metrics and logs over
 both transports the spec defines, publishes them to Redpanda, and drains them
@@ -16,7 +16,7 @@ exporters ──OTLP──▶ receiver ──▶ Redpanda ──▶ consumer ─
 
 `POST /v1/traces`, `/v1/metrics`, `/v1/logs`; `GET /healthz`.
 
-Browsers can export directly once `WATCHERS_HTTP_CORS_ORIGINS` names their
+Browsers can export directly once `SONDE_HTTP_CORS_ORIGINS` names their
 origin (or `*`). Preflights mirror the requested headers rather than answering
 `*`, because the wildcard is defined not to cover `Authorization`.
 
@@ -50,11 +50,11 @@ docker compose up -d
 Host ports are overridable — copy `.env.example` to `.env` if something already
 owns 8123/9000, 19092 or 4317/4318.
 
-The broker is optional. `WATCHERS_BACKEND=clickhouse` makes receivers write
+The broker is optional. `SONDE_BACKEND=clickhouse` makes receivers write
 straight to ClickHouse, which is the simplest thing that works for development:
 
 ```sh
-WATCHERS_BACKEND=clickhouse WATCHERS_ROLE=receiver cargo run --release
+SONDE_BACKEND=clickhouse SONDE_ROLE=receiver cargo run --release
 ```
 
 ## Why a broker
@@ -74,12 +74,12 @@ at-least-once: a crash between the insert and the commit replays that batch.
 
 ## Roles
 
-One binary, three shapes. `WATCHERS_ROLE=all` runs both halves in one process
+One binary, three shapes. `SONDE_ROLE=all` runs both halves in one process
 (the single-node default); splitting them lets receivers scale on request rate
 and consumers on write throughput, with the consumer group dividing partitions
 between replicas.
 
-| `WATCHERS_ROLE` | Runs |
+| `SONDE_ROLE` | Runs |
 |---|---|
 | `receiver` | OTLP endpoints only |
 | `consumer` | broker → ClickHouse only |
@@ -89,27 +89,27 @@ between replicas.
 
 | Variable | Default | |
 |---|---|---|
-| `WATCHERS_ROLE` | `all` | `receiver`, `consumer`, `all` |
-| `WATCHERS_BACKEND` | `clickhouse` | `kafka`, `clickhouse`, `log` |
-| `WATCHERS_GRPC_ADDR` | `0.0.0.0:4317` | |
-| `WATCHERS_HTTP_ADDR` | `0.0.0.0:4318` | |
-| `WATCHERS_HTTP_CORS_ORIGINS` | | comma-separated origins, or `*`; empty disables CORS |
-| `WATCHERS_KAFKA_BROKERS` | `localhost:9092` | |
-| `WATCHERS_KAFKA_TOPIC_PREFIX` | `otel` | topics are `<prefix>.traces`, `.metrics`, `.logs` |
-| `WATCHERS_KAFKA_GROUP_ID` | `watchers` | |
-| `WATCHERS_KAFKA_LINGER_MS` | `50` | producer batching window |
-| `WATCHERS_KAFKA_SEND_TIMEOUT_MS` | `10000` | |
-| `WATCHERS_KAFKA_MAX_MESSAGE_BYTES` | `16777216` | |
-| `WATCHERS_KAFKA_BATCH_MESSAGES` | `5000` | consumer flushes at either bound |
-| `WATCHERS_KAFKA_BATCH_WAIT_MS` | `1000` | |
-| `WATCHERS_KAFKA_RETRY_BACKOFF_MS` | `2000` | |
-| `WATCHERS_CLICKHOUSE_URL` | `http://localhost:8123` | |
-| `WATCHERS_CLICKHOUSE_DATABASE` | `otel` | |
-| `WATCHERS_CLICKHOUSE_USER` | `default` | |
-| `WATCHERS_CLICKHOUSE_PASSWORD` | | |
-| `WATCHERS_CLICKHOUSE_TTL_DAYS` | `30` | `0` keeps data forever |
-| `WATCHERS_CLICKHOUSE_CREATE_SCHEMA` | `true` | run the DDL on start |
-| `RUST_LOG` | `the_watchers=info,warn` | |
+| `SONDE_ROLE` | `all` | `receiver`, `consumer`, `all` |
+| `SONDE_BACKEND` | `clickhouse` | `kafka`, `clickhouse`, `log` |
+| `SONDE_GRPC_ADDR` | `0.0.0.0:4317` | |
+| `SONDE_HTTP_ADDR` | `0.0.0.0:4318` | |
+| `SONDE_HTTP_CORS_ORIGINS` | | comma-separated origins, or `*`; empty disables CORS |
+| `SONDE_KAFKA_BROKERS` | `localhost:9092` | |
+| `SONDE_KAFKA_TOPIC_PREFIX` | `otel` | topics are `<prefix>.traces`, `.metrics`, `.logs` |
+| `SONDE_KAFKA_GROUP_ID` | `sonde` | |
+| `SONDE_KAFKA_LINGER_MS` | `50` | producer batching window |
+| `SONDE_KAFKA_SEND_TIMEOUT_MS` | `10000` | |
+| `SONDE_KAFKA_MAX_MESSAGE_BYTES` | `16777216` | |
+| `SONDE_KAFKA_BATCH_MESSAGES` | `5000` | consumer flushes at either bound |
+| `SONDE_KAFKA_BATCH_WAIT_MS` | `1000` | |
+| `SONDE_KAFKA_RETRY_BACKOFF_MS` | `2000` | |
+| `SONDE_CLICKHOUSE_URL` | `http://localhost:8123` | |
+| `SONDE_CLICKHOUSE_DATABASE` | `otel` | |
+| `SONDE_CLICKHOUSE_USER` | `default` | |
+| `SONDE_CLICKHOUSE_PASSWORD` | | |
+| `SONDE_CLICKHOUSE_TTL_DAYS` | `30` | `0` keeps data forever |
+| `SONDE_CLICKHOUSE_CREATE_SCHEMA` | `true` | run the DDL on start |
+| `RUST_LOG` | `sonde=info,warn` | |
 
 ## Authentication
 
@@ -129,21 +129,21 @@ Everything except `/api/auth/*` and `/api/health` requires a session.
 
 Users live in `dex/config.yaml`. Dex is a federating provider, so swapping the
 static password for GitHub, Google or LDAP is a connector in that file and no
-change here. Set `WATCHERS_AUTH_DISABLED=true` to run without a provider
+change here. Set `SONDE_AUTH_DISABLED=true` to run without a provider
 locally — opt-out by design, so an unauthenticated API is never something you
 get by forgetting a variable.
 
 | Variable | Default | |
 |---|---|---|
-| `WATCHERS_OIDC_ISSUER` | `http://localhost:5556/dex` | |
-| `WATCHERS_OIDC_CLIENT_ID` | `the-watchers` | |
-| `WATCHERS_OIDC_CLIENT_SECRET` | | must match `dex/config.yaml` |
-| `WATCHERS_OIDC_REDIRECT_URI` | `http://localhost:4319/api/auth/callback` | must be registered in Dex |
-| `WATCHERS_APP_URL` | `http://localhost:4200` | where login lands |
-| `WATCHERS_SESSION_SECRET` | | signs the session cookie |
-| `WATCHERS_SESSION_HOURS` | `12` | sessions cannot be revoked early, so keep it short |
-| `WATCHERS_SECURE_COOKIES` | `false` | `true` anywhere with TLS |
-| `WATCHERS_AUTH_DISABLED` | `false` | |
+| `SONDE_OIDC_ISSUER` | `http://localhost:5556/dex` | |
+| `SONDE_OIDC_CLIENT_ID` | `sonde` | |
+| `SONDE_OIDC_CLIENT_SECRET` | | must match `dex/config.yaml` |
+| `SONDE_OIDC_REDIRECT_URI` | `http://localhost:4319/api/auth/callback` | must be registered in Dex |
+| `SONDE_APP_URL` | `http://localhost:4200` | where login lands |
+| `SONDE_SESSION_SECRET` | | signs the session cookie |
+| `SONDE_SESSION_HOURS` | `12` | sessions cannot be revoked early, so keep it short |
+| `SONDE_SECURE_COOKIES` | `false` | `true` anywhere with TLS |
+| `SONDE_AUTH_DISABLED` | `false` | |
 
 Ingest (4317/4318) is **not** authenticated yet.
 
@@ -220,15 +220,15 @@ the next build, without publishing.
 ```sh
 cargo test                                             # unit + gRPC transport
 
-WATCHERS_TEST_CLICKHOUSE_URL=http://localhost:8123 \
-  WATCHERS_TEST_CLICKHOUSE_USER=watchers \
-  WATCHERS_TEST_CLICKHOUSE_PASSWORD=watchers \
+SONDE_TEST_CLICKHOUSE_URL=http://localhost:8123 \
+  SONDE_TEST_CLICKHOUSE_USER=sonde \
+  SONDE_TEST_CLICKHOUSE_PASSWORD=sonde \
   cargo test --test clickhouse -- --test-threads=1
 
-WATCHERS_TEST_KAFKA_BROKERS=localhost:19092 \
-  WATCHERS_TEST_CLICKHOUSE_URL=http://localhost:8123 \
-  WATCHERS_TEST_CLICKHOUSE_USER=watchers \
-  WATCHERS_TEST_CLICKHOUSE_PASSWORD=watchers \
+SONDE_TEST_KAFKA_BROKERS=localhost:19092 \
+  SONDE_TEST_CLICKHOUSE_URL=http://localhost:8123 \
+  SONDE_TEST_CLICKHOUSE_USER=sonde \
+  SONDE_TEST_CLICKHOUSE_PASSWORD=sonde \
   cargo test --test pipeline -- --test-threads=1
 ```
 

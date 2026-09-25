@@ -4,7 +4,7 @@ import { getDebugger } from '@microphi/debug';
 import { configFromEnv } from '../config';
 import { StreamingResult } from './streaming-result';
 
-const d = getDebugger('watchers:api:clickhouse');
+const d = getDebugger('sonde:api:clickhouse');
 
 /** Values a query placeholder can carry. Everything reaches ClickHouse as a
  * bound parameter, never as interpolated SQL. */

@@ -26,8 +26,8 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 watchers
-COPY --from=builder /build/target/release/the-watchers /usr/local/bin/the-watchers
-USER watchers
+    && useradd --system --uid 10001 sonde
+COPY --from=builder /build/target/release/sonde /usr/local/bin/sonde
+USER sonde
 EXPOSE 4317 4318
-ENTRYPOINT ["/usr/local/bin/the-watchers"]
+ENTRYPOINT ["/usr/local/bin/sonde"]

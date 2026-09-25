@@ -39,7 +39,7 @@ import { StreamingEventHandler } from './server/streaming.handler';
 })
 export class Api {}
 
-const d = getDebugger('watchers:api');
+const d = getDebugger('sonde:api');
 
 export async function start(): Promise<void> {
   const config = configFromEnv();
@@ -63,7 +63,7 @@ export async function start(): Promise<void> {
 
   app.listen(config.port, () => {
     // eslint-disable-next-line no-console
-    console.log(`watchers api listening on :${config.port} → ${config.clickhouse.url}`);
+    console.log(`sonde api listening on :${config.port} → ${config.clickhouse.url}`);
     d('started', config);
   });
 }

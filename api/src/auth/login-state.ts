@@ -11,7 +11,7 @@ export interface LoginState {
   readonly verifier: string;
 }
 
-const LOGIN_COOKIE = 'watchers_login';
+const LOGIN_COOKIE = 'sonde_login';
 /** A login round trip is a redirect and a form post; ten minutes is generous. */
 const TTL_SECONDS = 600;
 

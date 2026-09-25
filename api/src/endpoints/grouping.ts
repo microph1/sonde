@@ -12,7 +12,7 @@ export const GROUPINGS = {
     label: 'App',
     // Stamped by the receiver from the ingest key, so unlike service it cannot
     // be self-declared.
-    expression: "ResourceAttributes['watchers.app']",
+    expression: "ResourceAttributes['sonde.app']",
   },
   environment: {
     label: 'Environment',

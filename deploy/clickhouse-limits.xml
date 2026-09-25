@@ -1,0 +1,16 @@
+<clickhouse>
+    <!--
+        Defaults assume a machine with memory to spare; this one has under two
+        gigabytes shared with everything else. Capping the server keeps a heavy
+        query from taking the box down with it, which on a monitoring host means
+        losing the evidence exactly when you need it.
+    -->
+    <max_server_memory_usage>900000000</max_server_memory_usage>
+    <mark_cache_size>268435456</mark_cache_size>
+    <profiles>
+        <default>
+            <max_memory_usage>600000000</max_memory_usage>
+            <max_threads>2</max_threads>
+        </default>
+    </profiles>
+</clickhouse>

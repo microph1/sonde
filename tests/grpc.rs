@@ -7,8 +7,8 @@ use std::time::Duration;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::trace_service_client::TraceServiceClient;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span};
-use the_watchers::grpc;
-use the_watchers::sink::LoggingSink;
+use sonde::grpc;
+use sonde::sink::LoggingSink;
 use tokio_util::sync::CancellationToken;
 
 /// Asks the OS for a free port and releases it again. The window before the

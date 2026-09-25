@@ -1,8 +1,8 @@
 {
-  "name": "@the-watchers/api",
+  "name": "@sonde/api",
   "version": "0.1.0",
   "private": true,
-  "description": "Read path for the-watchers: streams OTLP telemetry out of ClickHouse",
+  "description": "Read path for sonde: streams OTLP telemetry out of ClickHouse",
   "type": "commonjs",
   "main": "lib/main.js",
   "scripts": {

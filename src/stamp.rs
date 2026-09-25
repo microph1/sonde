@@ -1,7 +1,7 @@
 //! Stamps an authenticated app onto the resources of a batch.
 //!
 //! This is the point of the whole key mechanism: `service.name` is whatever the
-//! exporter chose to send, but `watchers.app` is decided by which credential
+//! exporter chose to send, but `sonde.app` is decided by which credential
 //! was presented, so it is the one attribute the console can group by and
 //! trust. Any value the exporter supplied under that key is replaced.
 

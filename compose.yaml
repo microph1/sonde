@@ -1,4 +1,4 @@
-name: the-watchers
+name: sonde
 
 services:
   redpanda:
@@ -29,8 +29,8 @@ services:
     image: clickhouse/clickhouse-server:25.8
     environment:
       CLICKHOUSE_DB: otel
-      CLICKHOUSE_USER: watchers
-      CLICKHOUSE_PASSWORD: watchers
+      CLICKHOUSE_USER: sonde
+      CLICKHOUSE_PASSWORD: sonde
       # Without this the bootstrap user is created without DDL rights and the
       # receiver cannot create its own tables on first start.
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
@@ -53,30 +53,30 @@ services:
   receiver:
     restart: unless-stopped
     build: .
-    image: the-watchers:local
+    image: sonde:local
     depends_on:
       redpanda:
         condition: service_healthy
-    environment: &watchers-env
-      WATCHERS_ROLE: receiver
-      WATCHERS_BACKEND: kafka
-      WATCHERS_GRPC_ADDR: 0.0.0.0:4317
-      WATCHERS_HTTP_ADDR: 0.0.0.0:4318
+    environment: &sonde-env
+      SONDE_ROLE: receiver
+      SONDE_BACKEND: kafka
+      SONDE_GRPC_ADDR: 0.0.0.0:4317
+      SONDE_HTTP_ADDR: 0.0.0.0:4318
       # Dev stack: any local web app may export straight from the browser.
       # Anywhere else this should be an explicit list of origins.
-      WATCHERS_HTTP_CORS_ORIGINS: "*"
-      WATCHERS_KAFKA_BROKERS: redpanda:9092
+      SONDE_HTTP_CORS_ORIGINS: "*"
+      SONDE_KAFKA_BROKERS: redpanda:9092
       # `required` refuses any batch without a valid app key. Off by default so
       # an existing deployment keeps working across an upgrade.
-      WATCHERS_INGEST_AUTH: ${WATCHERS_INGEST_AUTH:-off}
-      WATCHERS_CLICKHOUSE_URL: http://clickhouse:8123
-      WATCHERS_CLICKHOUSE_DATABASE: otel
-      WATCHERS_CLICKHOUSE_USER: watchers
-      WATCHERS_CLICKHOUSE_PASSWORD: watchers
-      RUST_LOG: the_watchers=debug,info
+      SONDE_INGEST_AUTH: ${SONDE_INGEST_AUTH:-off}
+      SONDE_CLICKHOUSE_URL: http://clickhouse:8123
+      SONDE_CLICKHOUSE_DATABASE: otel
+      SONDE_CLICKHOUSE_USER: sonde
+      SONDE_CLICKHOUSE_PASSWORD: sonde
+      RUST_LOG: sonde=debug,info
     ports:
-      - "${WATCHERS_GRPC_PORT:-4317}:4317"
-      - "${WATCHERS_HTTP_PORT:-4318}:4318"
+      - "${SONDE_GRPC_PORT:-4317}:4317"
+      - "${SONDE_HTTP_PORT:-4318}:4318"
 
   # Drains Redpanda into ClickHouse. Scale this on write throughput; the
   # consumer group divides the partitions between replicas.
@@ -84,15 +84,15 @@ services:
     restart: unless-stopped
     # Same image as the receiver; only the role differs. Naming it here rather
     # than repeating `build:` keeps compose from building the context twice.
-    image: the-watchers:local
+    image: sonde:local
     depends_on:
       redpanda:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
     environment:
-      <<: *watchers-env
-      WATCHERS_ROLE: consumer
+      <<: *sonde-env
+      SONDE_ROLE: consumer
 
   # Identity provider for the read API and the console.
   #
@@ -104,7 +104,7 @@ services:
     image: dexidp/dex:v2.44.0
     command: ["dex", "serve", "/etc/dex/config.yaml"]
     environment:
-      WATCHERS_OIDC_CLIENT_SECRET: ${WATCHERS_OIDC_CLIENT_SECRET:-dev-client-secret}
+      SONDE_OIDC_CLIENT_SECRET: ${SONDE_OIDC_CLIENT_SECRET:-dev-client-secret}
     volumes:
       - ./dex/config.yaml:/etc/dex/config.yaml:ro
       - dex-data:/var/dex

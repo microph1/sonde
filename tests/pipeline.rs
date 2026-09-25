@@ -1,7 +1,7 @@
 //! Receiver → Redpanda → consumer → ClickHouse, over real infrastructure.
 //!
-//! Skipped unless both `WATCHERS_TEST_KAFKA_BROKERS` and
-//! `WATCHERS_TEST_CLICKHOUSE_URL` are set.
+//! Skipped unless both `SONDE_TEST_KAFKA_BROKERS` and
+//! `SONDE_TEST_CLICKHOUSE_URL` are set.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -11,11 +11,11 @@ use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::common::v1::{AnyValue, KeyValue, any_value};
 use opentelemetry_proto::tonic::resource::v1::Resource;
 use opentelemetry_proto::tonic::trace::v1::{ResourceSpans, ScopeSpans, Span, span};
-use the_watchers::config::{ClickHouseConfig, KafkaConfig};
-use the_watchers::sink::Sink;
-use the_watchers::storage::clickhouse::{ClickHouseSink, schema};
-use the_watchers::stream::consumer::Consumer;
-use the_watchers::stream::kafka::KafkaSink;
+use sonde::config::{ClickHouseConfig, KafkaConfig};
+use sonde::sink::Sink;
+use sonde::storage::clickhouse::{ClickHouseSink, schema};
+use sonde::stream::consumer::Consumer;
+use sonde::stream::kafka::KafkaSink;
 use tokio_util::sync::CancellationToken;
 
 struct Env {
@@ -27,8 +27,8 @@ impl Env {
     /// Topics, consumer group and database are all suffixed per run so repeated
     /// runs never replay each other's messages.
     fn new(name: &str) -> Option<Self> {
-        let brokers = std::env::var("WATCHERS_TEST_KAFKA_BROKERS").ok()?;
-        let url = std::env::var("WATCHERS_TEST_CLICKHOUSE_URL").ok()?;
+        let brokers = std::env::var("SONDE_TEST_KAFKA_BROKERS").ok()?;
+        let url = std::env::var("SONDE_TEST_CLICKHOUSE_URL").ok()?;
         let unique = format!(
             "{name}_{}",
             SystemTime::now()
@@ -53,10 +53,10 @@ impl Env {
             },
             clickhouse: ClickHouseConfig {
                 url,
-                database: format!("watchers_test_{unique}"),
-                user: std::env::var("WATCHERS_TEST_CLICKHOUSE_USER")
+                database: format!("sonde_test_{unique}"),
+                user: std::env::var("SONDE_TEST_CLICKHOUSE_USER")
                     .unwrap_or_else(|_| "default".into()),
-                password: std::env::var("WATCHERS_TEST_CLICKHOUSE_PASSWORD").unwrap_or_default(),
+                password: std::env::var("SONDE_TEST_CLICKHOUSE_PASSWORD").unwrap_or_default(),
                 // Fixtures use fixed past timestamps that a live TTL would expire.
                 ttl_days: 0,
                 create_schema: true,
@@ -142,7 +142,7 @@ macro_rules! require_env {
             Some(env) => env,
             None => {
                 eprintln!(
-                    "skipping: set WATCHERS_TEST_KAFKA_BROKERS and WATCHERS_TEST_CLICKHOUSE_URL"
+                    "skipping: set SONDE_TEST_KAFKA_BROKERS and SONDE_TEST_CLICKHOUSE_URL"
                 );
                 return;
             }
