@@ -1,6 +1,6 @@
 {
   "name": "@sonde/api",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Read path for sonde: streams OTLP telemetry out of ClickHouse",
   "type": "commonjs",
