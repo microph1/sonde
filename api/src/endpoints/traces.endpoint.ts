@@ -8,7 +8,7 @@ import { SseResult } from '../clickhouse/sse-result';
 import { StreamingResult } from '../clickhouse/streaming-result';
 import { tail } from '../clickhouse/tail';
 import { configFromEnv } from '../config';
-import { SearchFilters, WINDOW_SQL, baseParams } from './filters';
+import { SPAN_WINDOW_SQL, SearchFilters, baseParams } from './filters';
 
 export interface TraceFilters extends SearchFilters {
   /** Only spans at least this slow, in milliseconds. */
@@ -46,7 +46,7 @@ export class TracesEndpoint {
     return this.clickhouse.stream(
       `SELECT ${SPAN_COLUMNS}
        FROM otel_traces
-       WHERE ${WINDOW_SQL}
+       WHERE ${SPAN_WINDOW_SQL}
          AND Duration >= {minDuration:UInt64}
          AND ({status:String} = '' OR StatusCode = {status:String})
          AND ({name:String} = '' OR SpanName = {name:String})

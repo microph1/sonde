@@ -59,3 +59,21 @@ export const WINDOW_SQL = `
   AND Timestamp >= parseDateTime64BestEffort({from:String}, 9)
   AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
 `;
+
+/**
+ * The same window, for spans — which occupy an interval rather than an instant.
+ *
+ * Filtering a span by its start alone hides anything that began before the
+ * window and was still running inside it. A peer session open for fifteen hours
+ * was invisible in every window shorter than fifteen hours, which is precisely
+ * when someone goes looking for it. A span matches if its interval overlaps the
+ * window at all.
+ *
+ * `Timestamp <= to` stays the leading condition so partition pruning and the
+ * primary key still do their work; the second term only widens the lower bound.
+ */
+export const SPAN_WINDOW_SQL = `
+  ({service:String} = '' OR ServiceName = {service:String})
+  AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
+  AND Timestamp + toIntervalNanosecond(Duration) >= parseDateTime64BestEffort({from:String}, 9)
+`;

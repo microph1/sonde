@@ -3,6 +3,7 @@
 
 use clickhouse::Row;
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
+use opentelemetry_proto::tonic::logs::v1::LogRecord;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use opentelemetry_proto::tonic::metrics::v1::{Metric, metric::Data};
@@ -291,8 +292,11 @@ pub fn log_rows(request: ExportLogsServiceRequest) -> Vec<LogRow> {
             let (scope_name, scope_version, _) = scope_parts(&scope_logs.scope);
 
             for record in scope_logs.log_records {
+                let timestamp = log_timestamp(&record);
+                let body = log_body(&record);
+
                 rows.push(LogRow {
-                    timestamp: nanos(record.time_unix_nano),
+                    timestamp,
                     observed_timestamp: nanos(record.observed_time_unix_nano),
                     trace_id: hex_id(&record.trace_id),
                     span_id: hex_id(&record.span_id),
@@ -300,7 +304,7 @@ pub fn log_rows(request: ExportLogsServiceRequest) -> Vec<LogRow> {
                     severity_text: record.severity_text,
                     severity_number: record.severity_number,
                     service_name: service.clone(),
-                    body: record.body.as_ref().map(any_value).unwrap_or_default(),
+                    body,
                     resource_attributes: resource_attributes.clone(),
                     scope_name: scope_name.clone(),
                     scope_version: scope_version.clone(),
@@ -311,6 +315,38 @@ pub fn log_rows(request: ExportLogsServiceRequest) -> Vec<LogRow> {
     }
 
     rows
+}
+
+/// When a record happened, falling back to when it was seen.
+///
+/// `time_unix_nano` is optional in OTLP and the spec says a consumer that finds
+/// it unset should use `observed_time_unix_nano`. Rust's
+/// `opentelemetry-appender-tracing` sets only the observed time, so storing the
+/// field verbatim filed every log from a `tracing`-bridged service at the Unix
+/// epoch — which hid them from every time-filtered query, since those all
+/// filter on `Timestamp`.
+fn log_timestamp(record: &LogRecord) -> i64 {
+    if record.time_unix_nano == 0 {
+        nanos(record.observed_time_unix_nano)
+    } else {
+        nanos(record.time_unix_nano)
+    }
+}
+
+/// The body, or the event name when there is no body.
+///
+/// A record can carry all its meaning in structured attributes and leave the
+/// body empty — the SDKs' own internal logs do exactly that. The attributes are
+/// stored either way, but a blank body renders as an empty row, and the event
+/// name is the one piece of context that says what the row is.
+fn log_body(record: &LogRecord) -> String {
+    let body = record.body.as_ref().map(any_value).unwrap_or_default();
+
+    if body.is_empty() {
+        record.event_name.clone()
+    } else {
+        body
+    }
 }
 
 pub fn metric_rows(request: ExportMetricsServiceRequest) -> MetricRows {
