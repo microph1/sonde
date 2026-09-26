@@ -80,11 +80,14 @@ jobs:
           # Only the first `version =`, which is the [package] one; the
           # dependency pins below it are not ours to rewrite.
           sed -i "0,/^version = /s//version = \"$version\"/" Cargo.toml
-          npm version "$version" --no-git-tag-version --prefix api
-          npm version "$version" --no-git-tag-version --prefix web
+          npm version "$version" --no-git-tag-version --allow-same-version --prefix api
+          npm version "$version" --no-git-tag-version --allow-same-version --prefix web
 
           git add Cargo.toml api/package.json web/package.json
-          git commit -m "chore(release): ${{ steps.next.outputs.next }} [skip ci]"
+          # A first release can land on manifests that already carry the
+          # version, and nothing to commit is not a reason to fail a release.
+          git diff --cached --quiet \
+            || git commit -m "chore(release): ${{ steps.next.outputs.next }} [skip ci]"
           git tag -a "${{ steps.next.outputs.next }}" -m "${{ steps.next.outputs.next }}"
           git push origin HEAD:master --follow-tags
 
