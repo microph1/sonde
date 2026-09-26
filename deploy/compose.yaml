@@ -117,5 +117,6 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      # OTLP/gRPC cannot share the HTTP port, so it is published directly.
-      - "4317:4317"
+      # No 4317: OTLP/gRPC is proxied over 443 with the same certificate, so
+      # there is no plaintext port to expose.
+

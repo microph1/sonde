@@ -13,6 +13,16 @@
 		reverse_proxy receiver:4318
 	}
 
+	# OTLP/gRPC. gRPC is HTTP/2 POSTs to a service-qualified path, so it rides
+	# this host and certificate rather than needing a plaintext port of its own
+	# open to the internet — which is what the previous arrangement would have
+	# been, had it worked: 4317 was published on this container while the
+	# receiver was the thing listening on it, so the mapping went nowhere.
+	# `h2c` because the hop to the receiver stays inside the compose network.
+	handle /opentelemetry.proto.collector.* {
+		reverse_proxy h2c://receiver:4317
+	}
+
 	# Anything else on this host is a misdirected request, and saying so beats a
 	# 404 that looks like the endpoint moved.
 	handle {
