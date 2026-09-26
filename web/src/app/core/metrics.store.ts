@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { Effect, Reduce, Store, makeStore } from '@microphi/store';
-import { EMPTY, Observable, combineLatest, from, map, of } from 'rxjs';
+import { EMPTY, Observable, combineLatest, from, map, of, skip } from 'rxjs';
 
 import { API_BASE_URL } from './api-base-url';
 import { RANGES, Range } from './services.store';
@@ -18,8 +18,20 @@ export interface MetricSummary {
   readonly monotonic: number;
 }
 
+export interface OverviewPoint {
+  readonly bucket: string;
+  readonly value: number;
+}
+
+/** A catalogue entry with enough shape to draw it. */
+export interface MetricOverview extends MetricSummary {
+  readonly points: OverviewPoint[];
+  readonly latest: number | null;
+}
+
 export interface MetricsState {
-  catalogue: MetricSummary[];
+  catalogue: MetricOverview[];
+  overview: MetricOverview[];
   selected: MetricSummary | null;
   points: SeriesPoint[];
   range: Range;
@@ -29,7 +41,8 @@ export interface MetricsState {
 }
 
 export interface MetricsActions {
-  loadCatalogue: () => Observable<MetricSummary[]>;
+  loadCatalogue: () => Observable<MetricOverview[]>;
+  loadOverview: (range: Range) => Observable<MetricOverview[]>;
   selectMetric: (key: string) => Observable<MetricSummary>;
   selectRange: (range: Range) => Observable<Range>;
   toggleRate: (rate: boolean) => Observable<boolean>;
@@ -51,6 +64,7 @@ export class MetricsStore
   private readonly baseUrl = inject(API_BASE_URL);
 
   readonly catalogue$ = this.select((state) => state.catalogue);
+  readonly overview$ = this.select((state) => state.overview);
   readonly selected$ = this.select((state) => state.selected);
   readonly points$ = this.select((state) => state.points);
   readonly range$ = this.select((state) => state.range);
@@ -60,6 +74,7 @@ export class MetricsStore
   constructor() {
     super({
       catalogue: [],
+      overview: [],
       selected: null,
       points: [],
       // Metrics are sampled minutes apart, so the overview's one-hour default
@@ -79,18 +94,39 @@ export class MetricsStore
         }
       },
     );
+
+    // Every card is drawn over the same window as the chart above it, so the
+    // overview follows the range for the same reason the series does. `skip(1)`
+    // because the view asks for the first load itself — subscribing here fires
+    // immediately, and two requests would race to fill the same list.
+    this.range$.pipe(skip(1)).subscribe((range) => this.dispatch('loadOverview', range));
+  }
+
+  /**
+   * The catalogue, each entry carrying its own line.
+   *
+   * One request for the whole page. The alternative was a request per card,
+   * which on a page listing thirty metrics is thirty round trips to draw
+   * thirty small things.
+   */
+  @Effect()
+  loadCatalogue(): Observable<MetricOverview[]> {
+    return this.fetchOverview(this.snapshot().range);
+  }
+
+  @Reduce()
+  onLoadCatalogue(state: MetricsState, overview: MetricOverview[]): MetricsState {
+    return this.withOverview(state, overview);
   }
 
   @Effect()
-  loadCatalogue(): Observable<MetricSummary[]> {
-    return from(this.request<MetricSummary[]>('GET', '/metrics'));
+  loadOverview(range: Range): Observable<MetricOverview[]> {
+    return this.fetchOverview(range);
   }
 
-  /** Picks something to show on first load, so the page is never an empty
-   * chart with a dropdown. */
   @Reduce()
-  onLoadCatalogue(state: MetricsState, catalogue: MetricSummary[]): MetricsState {
-    return { ...state, catalogue, selected: state.selected ?? catalogue[0] ?? null };
+  onLoadOverview(state: MetricsState, overview: MetricOverview[]): MetricsState {
+    return this.withOverview(state, overview);
   }
 
   /** Takes a `name|kind` key rather than the object, so the view can dispatch
@@ -185,6 +221,35 @@ export class MetricsStore
   @Reduce()
   onLoadReference(state: MetricsState, reference: number | null): MetricsState {
     return { ...state, reference };
+  }
+
+  private fetchOverview(range: Range): Observable<MetricOverview[]> {
+    return from(
+      this.request<MetricOverview[]>('POST', '/metrics/overview', {
+        from: new Date(Date.now() - range.windowMinutes * 60_000).toISOString(),
+        // Coarser than the detail chart on purpose: a card is a couple of
+        // hundred pixels wide, and more points than that is detail nobody can
+        // see. Sixty buckets across whatever the window is.
+        bucketSeconds: Math.max(Math.round(range.windowMinutes), 1),
+      }),
+    );
+  }
+
+  /** Picks something to show on first load, so the page is never an empty
+   * chart, and keeps the selection pointing at the freshly loaded entry. */
+  private withOverview(state: MetricsState, overview: MetricOverview[]): MetricsState {
+    const selected =
+      overview.find(
+        (metric) => metric.name === state.selected?.name && metric.kind === state.selected?.kind,
+      ) ??
+      overview[0] ??
+      null;
+
+    return { ...state, overview, catalogue: overview, selected };
+  }
+
+  private snapshot(): MetricsState {
+    return this._store$.getValue();
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {

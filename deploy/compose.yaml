@@ -10,6 +10,14 @@ name: sonde
 #
 # Everything stateful lives on the mounted data volume, so the root disk holds
 # only the OS.
+#
+# Two files in this directory are the box's, not the repository's: `.env` holds
+# the generated secrets and exists nowhere else, and `dex.yaml` on the server
+# carries the real users and client id while the copy here is a template. A
+# deploy that extracts an archive over /srv/sonde/app overwrites the second and
+# would overwrite the first if it were committed — copy both aside first and
+# put them back, or exclude them from the archive. Getting it wrong takes the
+# console's login down and the failure only shows at the next sign-in.
 
 services:
   clickhouse:
