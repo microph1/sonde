@@ -77,7 +77,10 @@ pub struct ApiKeys {
 }
 
 impl ApiKeys {
-    pub async fn load(config: &ClickHouseConfig, refresh_seconds: u64) -> anyhow::Result<Arc<Self>> {
+    pub async fn load(
+        config: &ClickHouseConfig,
+        refresh_seconds: u64,
+    ) -> anyhow::Result<Arc<Self>> {
         let client = Client::default()
             .with_url(&config.url)
             .with_user(&config.user)
@@ -178,9 +181,8 @@ impl ApiKeys {
             .ok_or(Rejection::Unknown)?;
 
         if record.public && !record.origins.is_empty() {
-            let allowed = origin.is_some_and(|origin| {
-                record.origins.iter().any(|candidate| candidate == origin)
-            });
+            let allowed = origin
+                .is_some_and(|origin| record.origins.iter().any(|candidate| candidate == origin));
 
             if !allowed {
                 return Err(Rejection::WrongOrigin);

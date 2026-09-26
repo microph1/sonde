@@ -141,9 +141,7 @@ macro_rules! require_env {
         match Env::new($name) {
             Some(env) => env,
             None => {
-                eprintln!(
-                    "skipping: set SONDE_TEST_KAFKA_BROKERS and SONDE_TEST_CLICKHOUSE_URL"
-                );
+                eprintln!("skipping: set SONDE_TEST_KAFKA_BROKERS and SONDE_TEST_CLICKHOUSE_URL");
                 return;
             }
         }

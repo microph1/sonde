@@ -79,7 +79,7 @@ jobs:
 
           # Only the first `version =`, which is the [package] one; the
           # dependency pins below it are not ours to rewrite.
-          sed -i "0,/^version = /s//version = \"$version\"/" Cargo.toml
+          sed -i "0,/^version = .*/s//version = \"$version\"/" Cargo.toml
           npm version "$version" --no-git-tag-version --allow-same-version --prefix api
           npm version "$version" --no-git-tag-version --allow-same-version --prefix web
 
@@ -95,7 +95,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: Version
 
-    if: needs.Version.outputs.bumped == 'true'
+    # PUBLISHED_PACKAGES for the same reason the pull request checks carry it:
+    # this job builds both TypeScript projects, and neither builds from what is
+    # on npm today. Until then a release tags and stops, and the deploy is the
+    # one step still done by hand.
+    if: needs.Version.outputs.bumped == 'true' && vars.PUBLISHED_PACKAGES == 'true'
 
     steps:
       - uses: actions/checkout@v4
