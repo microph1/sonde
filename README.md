@@ -236,3 +236,26 @@ Both integration suites skip themselves when their environment variables are
 unset. They run against real servers on purpose: the ClickHouse client validates
 every row against the server's own column types before inserting, so schema
 drift surfaces there and nowhere else.
+
+## Building outside a development machine
+
+`api` and `web` depend on `@microphi/*` and `@microgamma/apigator` through
+`file:` paths into sibling checkouts. On a machine that has those checkouts
+that is the point — edit the package, rebuild here, no publish in between.
+Anywhere else, including CI, there is nothing at the other end of the path.
+
+`.github/ci/use-published-packages.mjs` rewrites those entries to the published
+versions, which is what CI runs before installing:
+
+```sh
+node .github/ci/use-published-packages.mjs api web
+npm install --legacy-peer-deps --prefix api   # published apigator still peers on reflect-metadata ^0.1
+npm install --prefix web
+```
+
+To go back to working against local checkouts, `git checkout` the two
+manifests, or `npm link` the packages over the installed copies.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).

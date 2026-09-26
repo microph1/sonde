@@ -1,0 +1,167 @@
+name: Version Build Deploy
+
+on:
+  push:
+    branches: [master]
+
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  Version:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    outputs:
+      previous: ${{ steps.next.outputs.previous }}
+      next: ${{ steps.next.outputs.next }}
+      bumped: ${{ steps.next.outputs.bumped }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set git user
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+
+      # Conventional commits decide the bump, read from the commits since the
+      # last tag: a breaking change majors, a feat minors, a fix patches, and
+      # anything else releases nothing. Docs and chores do not deserve a
+      # version, and a release nobody can describe is worse than no release.
+      - id: next
+        name: Work out the next version
+        run: |
+          previous=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          range=${previous:+$previous..HEAD}
+          subjects=$(git log --pretty=%s ${range:-HEAD})
+          messages=$(git log --pretty=%B ${range:-HEAD})
+
+          if echo "$messages" | grep -qE "^BREAKING CHANGE|^[a-z]+(\([^)]*\))?!:"; then
+            bump=major
+          elif echo "$subjects" | grep -qE "^feat(\([^)]*\))?:"; then
+            bump=minor
+          elif echo "$subjects" | grep -qE "^fix(\([^)]*\))?:"; then
+            bump=patch
+          else
+            bump=none
+          fi
+
+          current=${previous#v}
+          current=${current:-0.0.0}
+          IFS=. read -r major minor patch <<< "$current"
+
+          case "$bump" in
+            major) next="v$((major + 1)).0.0" ;;
+            minor) next="v${major}.$((minor + 1)).0" ;;
+            patch) next="v${major}.${minor}.$((patch + 1))" ;;
+            none)  next="$previous" ;;
+          esac
+
+          echo "previous=$previous" >> $GITHUB_OUTPUT
+          echo "next=$next" >> $GITHUB_OUTPUT
+          echo "bumped=$([ "$bump" = none ] && echo false || echo true)" >> $GITHUB_OUTPUT
+          echo "$bump: ${previous:-no tag yet} -> $next"
+
+      - name: Write the version into the three manifests
+        if: steps.next.outputs.bumped == 'true'
+        run: |
+          version=${{ steps.next.outputs.next }}
+          version=${version#v}
+
+          # Only the first `version =`, which is the [package] one; the
+          # dependency pins below it are not ours to rewrite.
+          sed -i "0,/^version = /s//version = \"$version\"/" Cargo.toml
+          npm version "$version" --no-git-tag-version --prefix api
+          npm version "$version" --no-git-tag-version --prefix web
+
+          git add Cargo.toml api/package.json web/package.json
+          git commit -m "chore(release): ${{ steps.next.outputs.next }} [skip ci]"
+          git tag -a "${{ steps.next.outputs.next }}" -m "${{ steps.next.outputs.next }}"
+          git push origin HEAD:master --follow-tags
+
+  Deploy:
+    runs-on: ubuntu-latest
+    needs: Version
+
+    if: needs.Version.outputs.bumped == 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.Version.outputs.next }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Use published @microphi and @microgamma packages
+        run: node .github/ci/use-published-packages.mjs api web
+
+      - name: Build the API bundle
+        run: |
+          npm install --legacy-peer-deps --prefix api
+          npm run build --prefix api
+
+      - name: Build the console
+        run: |
+          npm install --prefix web
+          npm run build --prefix web -- --configuration production
+
+      # What ships: the receiver's source (it is built on the box, in Docker),
+      # both built artefacts, and the compose stack. Not `deploy/dex.yaml` -
+      # the copy in this repository is a template, and the server's carries the
+      # real users and client id. `deploy/.env` holds the generated secrets and
+      # is not in the repository at all.
+      - name: Package
+        run: |
+          tar czf sonde-deploy.tgz \
+            --exclude=deploy/dex.yaml \
+            Cargo.toml Cargo.lock Dockerfile src \
+            deploy api/Dockerfile api/dist/main.js web/dist/web/browser
+
+      - name: Copy to the server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER || 'ec2-user' }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: sonde-deploy.tgz
+          target: /srv/sonde/app
+
+      - name: Deploy
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER || 'ec2-user' }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd /srv/sonde/app
+            tar xzf sonde-deploy.tgz
+            rm sonde-deploy.tgz
+            chmod 600 deploy/.env
+            cd deploy
+            sudo docker compose up -d --build
+            sudo docker compose ps
+
+      # A deploy that returns green while the console 500s is not a deploy.
+      # Ingest answering 401 without a key is the correct answer: it means the
+      # receiver is up and refusing anonymous telemetry.
+      - name: Smoke test
+        run: |
+          console=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ vars.CONSOLE_HOST }}/")
+          session=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ vars.CONSOLE_HOST }}/api/auth/me")
+          ingest=$(curl -s -o /dev/null -w '%{http_code}' -X POST "https://${{ vars.INGEST_HOST }}/v1/traces" \
+            -H 'content-type: application/json' -d '{"resourceSpans":[]}')
+
+          echo "console=$console session=$session ingest=$ingest"
+          [ "$console" = 200 ] && [ "$session" = 401 ] && [ "$ingest" = 401 ]

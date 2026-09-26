@@ -1,0 +1,100 @@
+name: Pull Request Checks
+
+on:
+  pull_request:
+    branches: [master]
+
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run's answer worthless.
+concurrency:
+  group: pr-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  Receiver:
+    name: Receiver (Rust)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+
+      # rdkafka-sys builds librdkafka from source rather than linking a system
+      # one, which is why this needs a C toolchain and the SASL and SSL headers.
+      - name: Install librdkafka build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ make python3 libsasl2-dev libssl-dev pkg-config zlib1g-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      # Every test here runs against fakes - no ClickHouse, no Redpanda - so
+      # this needs no services and says something even so.
+      - name: Test
+        run: cargo test --all-targets
+
+  Api:
+    name: API (TypeScript)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Use published @microphi and @microgamma packages
+        run: node .github/ci/use-published-packages.mjs api
+
+      # --legacy-peer-deps because the published @microgamma/apigator still
+      # declares a peer on reflect-metadata ^0.1 while this depends on ^0.2.
+      # It goes away when apigator's current version is published.
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps --prefix api
+
+      - name: Typecheck
+        run: npm run build --prefix api
+
+  Console:
+    name: Console (Angular)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Use published @microphi packages
+        run: node .github/ci/use-published-packages.mjs web
+
+      - name: Install dependencies
+        run: npm install --prefix web
+
+      # The production build is the check: Angular type-checks templates here
+      # and nowhere else, so `tsc --noEmit` alone would pass on a template that
+      # cannot compile.
+      - name: Build
+        run: npm run build --prefix web -- --configuration production
