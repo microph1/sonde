@@ -23,6 +23,12 @@ export const routes: Routes = [
     loadComponent: () => import('./features/trace-detail/trace-detail').then((m) => m.TraceDetail),
   },
   {
+    path: 'metrics',
+    canActivate: [authGuard],
+    title: 'Metrics · sonde',
+    loadComponent: () => import('./features/metrics-view/metrics-view').then((m) => m.MetricsView),
+  },
+  {
     path: 'apps',
     canActivate: [authGuard],
     title: 'Apps & keys · sonde',

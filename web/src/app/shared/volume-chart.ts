@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
 
-import { VolumePoint } from '../core/telemetry.model';
+import { SeriesPoint } from '../core/telemetry.model';
 
 /**
  * Categorical slots, in fixed order, stepped for this app's dark surface
@@ -57,6 +57,13 @@ const LABEL_CHARS = 17;
           @for (line of gridLines(); track line.value) {
             <line class="grid" [attr.x1]="view.left" [attr.x2]="plotRight" [attr.y1]="line.y" [attr.y2]="line.y" />
             <text class="axis" [attr.x]="view.left - 8" [attr.y]="line.y + 4" text-anchor="end">
+              {{ line.label }}
+            </text>
+          }
+
+          @if (referenceLine(); as line) {
+            <line class="reference" [attr.x1]="view.left" [attr.x2]="plotRight" [attr.y1]="line.y" [attr.y2]="line.y" />
+            <text class="axis reference-label" [attr.x]="plotRight + 8" [attr.y]="line.y + 4">
               {{ line.label }}
             </text>
           }
@@ -165,6 +172,16 @@ const LABEL_CHARS = 17;
       font-size: 11px;
     }
 
+    .reference {
+      stroke: var(--warn);
+      stroke-width: 1;
+      stroke-dasharray: 6 4;
+    }
+
+    .reference-label {
+      fill: var(--warn);
+    }
+
     .crosshair {
       stroke: var(--text-dim);
       stroke-width: 1;
@@ -217,8 +234,13 @@ const LABEL_CHARS = 17;
   `,
 })
 export class VolumeChart {
-  readonly points = input.required<readonly VolumePoint[]>();
-  readonly metric = input<'spans' | 'logs'>('spans');
+  /** Long-form series: one entry per bucket per series. Callers map their own
+   * shape into this, so the chart knows nothing about telemetry. */
+  readonly points = input.required<readonly SeriesPoint[]>();
+  /** Drawn as a dashed reference line — a limit or a threshold the series
+   * should be read against. */
+  readonly reference = input<number | null>(null);
+  readonly format = input<(value: number) => string>(compact);
   readonly title = input('Volume');
   readonly unit = input('per bucket');
 
@@ -247,27 +269,29 @@ export class VolumeChart {
     }
 
     const index = new Map(buckets.map((bucket, position) => [bucket, position]));
-    const metric = this.metric();
     const totals = new Map<string, number>();
     const rows = new Map<string, number[]>();
 
     for (const point of this.points()) {
-      const value = point[metric];
-      const row = rows.get(point.ServiceName) ?? new Array<number>(buckets.length).fill(0);
-      row[index.get(point.bucket) ?? 0] += value;
-      rows.set(point.ServiceName, row);
-      totals.set(point.ServiceName, (totals.get(point.ServiceName) ?? 0) + value);
+      const row = rows.get(point.series) ?? new Array<number>(buckets.length).fill(0);
+      row[index.get(point.bucket) ?? 0] += point.value;
+      rows.set(point.series, row);
+      totals.set(point.series, (totals.get(point.series) ?? 0) + point.value);
     }
 
-    const ranked = [...totals.entries()]
-      .filter(([, total]) => total > 0)
-      .sort((a, b) => b[1] - a[1]);
+    // Ranked by total, but no longer filtered by it: a series flat at zero is a
+    // fact worth drawing. A counter that has stopped incrementing and a service
+    // that has stopped reporting otherwise both render as an empty chart, which
+    // reads as "no data" rather than as the answer.
+    const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
 
     const kept = ranked.slice(0, MAX_SERIES);
     const folded = ranked.slice(MAX_SERIES);
 
     const series = kept.map(([name, total], slot) => ({
-      name,
+      // A series with no attributes has no label of its own; the chart's title
+      // is what it is.
+      name: name || this.title(),
       total,
       color: SERIES_COLORS[slot],
       values: rows.get(name) ?? [],
@@ -302,17 +326,26 @@ export class VolumeChart {
   });
 
   private readonly max = computed(() => {
-    const metric = this.metric();
     const perBucket = new Map<string, number>();
 
     for (const point of this.points()) {
-      perBucket.set(
-        `${point.bucket}|${point.ServiceName}`,
-        (perBucket.get(`${point.bucket}|${point.ServiceName}`) ?? 0) + point[metric],
-      );
+      const key = `${point.bucket}|${point.series}`;
+      perBucket.set(key, (perBucket.get(key) ?? 0) + point.value);
     }
 
-    return Math.max(1, ...perBucket.values());
+    // A reference line above every point still has to fit on the axis.
+    return Math.max(1, this.reference() ?? 0, ...perBucket.values());
+  });
+
+  /** Where a limit or threshold sits on the axis, when one was given. */
+  protected readonly referenceLine = computed(() => {
+    const reference = this.reference();
+
+    if (reference === null || reference <= 0) {
+      return null;
+    }
+
+    return { y: this.y(reference, this.max()), label: this.format()(reference) };
   });
 
   protected readonly gridLines = computed(() => {
@@ -321,7 +354,7 @@ export class VolumeChart {
     return [0, 0.25, 0.5, 0.75, 1].map((fraction) => {
       const value = Math.round(max * fraction);
 
-      return { value, y: this.y(value, max), label: compact(value) };
+      return { value, y: this.y(value, max), label: this.format()(value) };
     });
   });
 

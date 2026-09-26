@@ -72,3 +72,11 @@ export interface VolumePoint {
   readonly logs: number;
   readonly errors: number;
 }
+
+/** Long-form series data: one entry per bucket per series. The chart's only
+ * input shape — every view maps its own rows into this. */
+export interface SeriesPoint {
+  readonly bucket: string;
+  readonly series: string;
+  readonly value: number;
+}

@@ -13,6 +13,7 @@ import { ClickHouseService } from './clickhouse/clickhouse.service';
 import { configFromEnv } from './config';
 import { LogsEndpoint } from './endpoints/logs.endpoint';
 import { AppsEndpoint } from './endpoints/apps.endpoint';
+import { MetricsEndpoint } from './endpoints/metrics.endpoint';
 import { ServicesEndpoint } from './endpoints/services.endpoint';
 import { TracesEndpoint } from './endpoints/traces.endpoint';
 import { createApp } from './server/express-app';
@@ -27,6 +28,7 @@ import { StreamingEventHandler } from './server/streaming.handler';
     ClickHouseService,
     AppsService,
     AppsEndpoint,
+    MetricsEndpoint,
     Oidc,
     Sessions,
     LoginStates,
@@ -57,6 +59,7 @@ export async function start(): Promise<void> {
       injector(LogsEndpoint),
       injector(ServicesEndpoint),
       injector(AppsEndpoint),
+      injector(MetricsEndpoint),
     ],
     injector(AuthRoutes),
   );

@@ -56,14 +56,12 @@ import { VolumeChart } from '../../shared/volume-chart';
 
       <div class="charts fx-gap-6 fx-mb-6">
         <wt-volume-chart
-          [points]="(points$ | async) ?? []"
-          metric="spans"
+          [points]="(spans$ | async) ?? []"
           title="Spans"
           [unit]="'per ' + range.bucketLabel"
         />
         <wt-volume-chart
-          [points]="(points$ | async) ?? []"
-          metric="logs"
+          [points]="(logs$ | async) ?? []"
           title="Log records"
           [unit]="'per ' + range.bucketLabel"
         />
@@ -183,6 +181,21 @@ export class ServicesView implements OnInit {
 
   protected readonly services$ = this.store.services$;
   protected readonly range$ = this.store.range$;
+  /** The chart speaks long-form series, so each signal is projected into that
+   * shape rather than the chart knowing what a span is. */
+  private readonly asSeries = (metric: 'spans' | 'logs') =>
+    this.store.volume$.pipe(
+      map((points) =>
+        points.map((point) => ({
+          bucket: point.bucket,
+          series: point.ServiceName,
+          value: point[metric],
+        })),
+      ),
+    );
+
+  protected readonly spans$ = this.asSeries('spans');
+  protected readonly logs$ = this.asSeries('logs');
   protected readonly points$ = this.store.volume$;
   protected readonly grouping$ = this.store.grouping$;
   protected readonly groupings$ = this.store.groupings$;
