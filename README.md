@@ -259,3 +259,11 @@ manifests, or `npm link` the packages over the installed copies.
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
+
+### A caveat on the console build
+
+The console's stores are written against the `makeStore` typings in the working
+copy of `@microphi/store`, which are ahead of what is on npm: built against the
+published 2.11.0 or 2.11.1, every effect method resolves to `never` and the
+build fails. So CI can check the receiver and the API today, and can check the
+console from the moment those typings are published.
