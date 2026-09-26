@@ -14,7 +14,7 @@
  *
  * Usage: node .github/ci/use-published-packages.mjs api web
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 const PUBLISHED = {
   '@microphi/debug': '^2.11.0',
@@ -50,5 +50,14 @@ for (const project of process.argv.slice(2)) {
   }
 
   writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
+
+  // The lock file still describes those dependencies as links to a path that
+  // is not there, and npm honours the lock: it installed everything else and
+  // said nothing, leaving a build that could not resolve @microphi/di. With
+  // the manifest rewritten the lock is no longer a description of this tree,
+  // so it goes.
+  if (swapped.length) {
+    rmSync(`${project}/package-lock.json`, { force: true });
+  }
   console.log(`${path}: ${swapped.length ? swapped.join(', ') : 'nothing to swap'}`);
 }
