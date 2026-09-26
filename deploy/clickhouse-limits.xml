@@ -13,4 +13,29 @@
             <max_threads>2</max_threads>
         </default>
     </profiles>
+
+    <!--
+        ClickHouse's own telemetry, switched off.
+
+        metric_log and asynchronous_metric_log write a wide row every second and
+        trace_log samples every query; on this box that was enough to push the
+        server past its own cap - a single metric_log merge was holding 258 MB,
+        and with RSS over the limit *every* query was rejected, including
+        `SELECT count()`. The irony of a monitoring host being taken down by its
+        database's self-monitoring is not lost, but the telemetry we care about
+        is the telemetry our services send us, and that lives in otel_*.
+
+        query_log stays: it is written once per query rather than once per
+        second, and it is the only way to find out why a console page was slow.
+    -->
+    <metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <trace_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <part_log remove="1"/>
+    <text_log remove="1"/>
+
+    <query_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </query_log>
 </clickhouse>
