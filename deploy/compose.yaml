@@ -25,6 +25,11 @@ services:
       - ./clickhouse-limits.xml:/etc/clickhouse-server/config.d/limits.xml:ro
     ulimits:
       nofile: { soft: 262144, hard: 262144 }
+    # A cgroup limit ClickHouse can read, so its ratio-based defaults are
+    # computed against what it may actually have rather than against a box it
+    # shares with four other containers and the kernel.
+    mem_limit: 1350m
+    memswap_limit: 1750m
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
       interval: 10s

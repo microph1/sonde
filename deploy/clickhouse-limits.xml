@@ -4,13 +4,61 @@
         gigabytes shared with everything else. Capping the server keeps a heavy
         query from taking the box down with it, which on a monitoring host means
         losing the evidence exactly when you need it.
+
+        The cap is read against RSS, and ~335 MB of this process's RSS is the
+        ClickHouse binary's own code pages. That overhead is what turned a
+        900 MB cap into "every query, including SELECT count(), is rejected" -
+        and, worse, into 500s on the ingest path, because a failed INSERT is a
+        dropped batch. Hence the caches below: they are the part of the
+        footprint we can actually give back.
     -->
-    <max_server_memory_usage>900000000</max_server_memory_usage>
-    <mark_cache_size>268435456</mark_cache_size>
+    <max_server_memory_usage>1100000000</max_server_memory_usage>
+
+    <!-- 64 MB rather than the 256 MB default. Marks are re-read from page cache
+         on a miss, which is cheap here; 192 MB of headroom is not. -->
+    <mark_cache_size>67108864</mark_cache_size>
+    <uncompressed_cache_size>0</uncompressed_cache_size>
+    <mmap_cache_size>0</mmap_cache_size>
+    <compiled_expression_cache_size>0</compiled_expression_cache_size>
+
+    <!--
+        Merges were the occupant: 390 MB of the tracked 460 MB at idle, on a
+        server whose whole allowance is a gigabyte. A soft limit makes the
+        background pool wait for room instead of taking it from the query and
+        insert paths, which is the right trade here - a merge that runs late
+        costs read speed, an INSERT that fails costs telemetry.
+    -->
+    <merges_mutations_memory_usage_soft_limit>250000000</merges_mutations_memory_usage_soft_limit>
+
+    <merge_tree>
+        <!-- Narrower blocks per merge: these tables carry attribute maps, so
+             8192 rows at a time is a lot of resident bytes for one merge. -->
+        <merge_max_block_size>2048</merge_max_block_size>
+        <!-- Kept in step with the pool: mutations need this many free slots,
+             and lowering the pool without lowering this is a refusal to start
+             (BAD_ARGUMENTS, at boot, on a running production box). -->
+        <number_of_free_entries_in_pool_to_execute_mutation>8</number_of_free_entries_in_pool_to_execute_mutation>
+        <!-- Nothing here will ever be a 150 GB part, which is what the default
+             lets a single merge aim at. -->
+        <max_bytes_to_merge_at_max_space_in_pool>2147483648</max_bytes_to_merge_at_max_space_in_pool>
+    </merge_tree>
+
     <profiles>
         <default>
-            <max_memory_usage>600000000</max_memory_usage>
+            <max_memory_usage>500000000</max_memory_usage>
             <max_threads>2</max_threads>
+
+            <!--
+                The receiver inserts one part per OTLP batch, which on a busy
+                minute is dozens of tiny parts that then have to be merged -
+                and merges were a good share of the memory that took the server
+                over its cap. Asynchronous inserts let the server coalesce them;
+                `wait_for_async_insert` keeps the acknowledgement honest, so a
+                200 response still means the rows are durable.
+            -->
+            <async_insert>1</async_insert>
+            <wait_for_async_insert>1</wait_for_async_insert>
+            <async_insert_busy_timeout_ms>1000</async_insert_busy_timeout_ms>
         </default>
     </profiles>
 
@@ -19,11 +67,10 @@
 
         metric_log and asynchronous_metric_log write a wide row every second and
         trace_log samples every query; on this box that was enough to push the
-        server past its own cap - a single metric_log merge was holding 258 MB,
-        and with RSS over the limit *every* query was rejected, including
-        `SELECT count()`. The irony of a monitoring host being taken down by its
-        database's self-monitoring is not lost, but the telemetry we care about
-        is the telemetry our services send us, and that lives in otel_*.
+        server past its own cap - a single metric_log merge was holding 258 MB.
+        The irony of a monitoring host being taken down by its database's
+        self-monitoring is not lost, but the telemetry we care about is the
+        telemetry our services send us, and that lives in otel_*.
 
         query_log stays: it is written once per query rather than once per
         second, and it is the only way to find out why a console page was slow.
