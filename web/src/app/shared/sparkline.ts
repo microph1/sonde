@@ -28,7 +28,7 @@ const VIEW = { width: 240, height: 44, pad: 3 };
         }
       </svg>
     } @else {
-      <p class="empty">no data in this window</p>
+      <p class="empty">{{ empty() }}</p>
     }
   `,
   styles: `
@@ -77,6 +77,9 @@ const VIEW = { width: 240, height: 44, pad: 3 };
 export class Sparkline {
   readonly points = input<SparkPoint[]>([]);
   readonly label = input('');
+  /** What an absence means here. The caller knows whether nothing was
+   * reported or whether there is not yet enough of it to draw. */
+  readonly empty = input('no data in this window');
 
   protected readonly viewBox = `0 0 ${VIEW.width} ${VIEW.height}`;
 

@@ -45,11 +45,18 @@ export interface MetricOverview extends MetricSummary {
   /** The most recent bucket's reading, or null when nothing landed in the
    * window — which is itself worth saying on a card. */
   readonly latest: number | null;
+  /** Buckets the window held, counting the one a rate spends establishing a
+   * baseline. `samples` above zero with no points is a young counter, not a
+   * silent one. */
+  readonly samples: number;
 }
 
 interface OverviewRow extends OverviewPoint {
   readonly name: string;
   readonly kind: MetricKind;
+  readonly position: number;
+  /** 1 where the first bucket is a baseline rather than a reading. */
+  readonly dropFirst: number;
 }
 
 const TABLES: Record<MetricKind, string> = {
@@ -78,7 +85,7 @@ const OVERVIEW_WINDOW = `
 `;
 
 const GAUGE_OVERVIEW_SQL = `
-  SELECT name, 'gauge' AS kind, toString(bucket) AS bucket, value
+  SELECT name, 'gauge' AS kind, toString(bucket) AS bucket, value, 1 AS position, 0 AS dropFirst
   FROM (
     SELECT MetricName AS name,
            toStartOfInterval(Timestamp, INTERVAL {bucket:UInt32} SECOND) AS bucket,
@@ -100,7 +107,7 @@ const GAUGE_OVERVIEW_SQL = `
  * passes through as the total.
  */
 const SUM_OVERVIEW_SQL = `
-  SELECT name, 'sum' AS kind, toString(bucket) AS bucket, value
+  SELECT name, 'sum' AS kind, toString(bucket) AS bucket, value, position, monotonic AS dropFirst
   FROM (
     SELECT name, bucket, monotonic, position,
            if(monotonic = 1, greatest(0, total - previous) / {bucket:UInt32}, total) AS value
@@ -123,7 +130,6 @@ const SUM_OVERVIEW_SQL = `
         GROUP BY name, bucket
       )
     )
-    WHERE monotonic = 0 OR position > 1
   )
   ORDER BY name, bucket
 `;
@@ -131,7 +137,7 @@ const SUM_OVERVIEW_SQL = `
 /** A histogram's count is cumulative like a counter's, so the card shows the
  * same thing a counter's does: observations per second. */
 const HISTOGRAM_OVERVIEW_SQL = `
-  SELECT name, 'histogram' AS kind, toString(bucket) AS bucket, value
+  SELECT name, 'histogram' AS kind, toString(bucket) AS bucket, value, position, 1 AS dropFirst
   FROM (
     SELECT name, bucket, position,
            greatest(0, total - previous) / {bucket:UInt32} AS value
@@ -153,7 +159,6 @@ const HISTOGRAM_OVERVIEW_SQL = `
         GROUP BY name, bucket
       )
     )
-    WHERE position > 1
   )
   ORDER BY name, bucket
 `;
@@ -239,20 +244,33 @@ export class MetricsEndpoint {
       this.clickhouse.rows<OverviewRow>(HISTOGRAM_OVERVIEW_SQL, params),
     ]);
 
-    const lines = new Map<string, OverviewPoint[]>();
+    const lines = new Map<string, { points: OverviewPoint[]; samples: number }>();
 
     for (const row of [...gauges, ...sums, ...histograms]) {
       const key = `${row.name}|${row.kind}`;
-      const line = lines.get(key) ?? [];
+      const line = lines.get(key) ?? { points: [], samples: 0 };
 
-      line.push({ bucket: row.bucket, value: row.value });
+      // Counted before the first bucket is dropped: a counter deployed twenty
+      // minutes ago has one bucket and no rate, and "nothing reported" and
+      // "not enough history to subtract yet" are different things to be told.
+      line.samples += 1;
+
+      if (!row.dropFirst || row.position > 1) {
+        line.points.push({ bucket: row.bucket, value: row.value });
+      }
+
       lines.set(key, line);
     }
 
     return catalogue.map((metric) => {
-      const points = lines.get(`${metric.name}|${metric.kind}`) ?? [];
+      const line = lines.get(`${metric.name}|${metric.kind}`) ?? { points: [], samples: 0 };
 
-      return { ...metric, points, latest: points.at(-1)?.value ?? null };
+      return {
+        ...metric,
+        points: line.points,
+        samples: line.samples,
+        latest: line.points.at(-1)?.value ?? null,
+      };
     });
   }
 

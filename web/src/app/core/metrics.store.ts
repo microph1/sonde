@@ -27,6 +27,9 @@ export interface OverviewPoint {
 export interface MetricOverview extends MetricSummary {
   readonly points: OverviewPoint[];
   readonly latest: number | null;
+  /** Buckets in the window, counting the one a rate spends on a baseline.
+   * Above zero with no points means young, not silent. */
+  readonly samples: number;
 }
 
 export interface MetricsState {

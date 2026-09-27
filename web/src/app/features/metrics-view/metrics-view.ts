@@ -82,6 +82,7 @@ import { VolumeChart } from '../../shared/volume-chart';
 
           <wt-sparkline
             [points]="metric.points"
+            [empty]="absence(metric)"
             [label]="metric.name + ', ' + reading(metric) + ' over the selected window'"
           />
 
@@ -233,6 +234,20 @@ export class MetricsView implements OnInit {
     }
 
     return metric.kind === 'sum' ? 'level' : 'gauge';
+  }
+
+  /**
+   * Why there is no line.
+   *
+   * A rate is the difference between two buckets, so a counter deployed inside
+   * the window has reported and still has nothing to draw. "No data in this
+   * window" reads as something being broken; it is the opposite - the data is
+   * too new, and the next bucket fixes it.
+   */
+  protected absence(metric: MetricOverview): string {
+    return metric.samples > 0
+      ? 'not enough history yet for a rate'
+      : 'no data in this window';
   }
 
   protected display(metric: MetricOverview): string {
