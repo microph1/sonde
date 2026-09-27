@@ -28,6 +28,10 @@ interface Series {
 }
 
 const VIEW = { width: 960, height: 260, left: 52, right: 118, top: 12, bottom: 28 };
+/** How far above the data a reference line may sit and still be drawn. Past
+ * this it wins the axis and flattens the series it was meant to give context
+ * to; see `referenceFits`. */
+const REFERENCE_HEADROOM = 1.5;
 /** Beyond this the direct label overruns its reserve; the legend still carries
  * the full name, so shortening here loses nothing. */
 const LABEL_CHARS = 17;
@@ -40,6 +44,11 @@ const LABEL_CHARS = 17;
       <figcaption class="fx-flex fx-items-baseline fx-gap-2 fx-mb-1">
         <h2>{{ title() }}</h2>
         <span class="unit">{{ unit() }}</span>
+
+        <!-- A limit too far above the data to draw is still worth knowing. -->
+        @if (headroom(); as reading) {
+          <span class="unit headroom">· {{ reading }}</span>
+        }
       </figcaption>
 
       @if (series().length === 0) {
@@ -325,7 +334,7 @@ export class VolumeChart {
     return dodge(placed);
   });
 
-  private readonly max = computed(() => {
+  private readonly dataMax = computed(() => {
     const perBucket = new Map<string, number>();
 
     for (const point of this.points()) {
@@ -333,19 +342,55 @@ export class VolumeChart {
       perBucket.set(key, (perBucket.get(key) ?? 0) + point.value);
     }
 
-    // A reference line above every point still has to fit on the axis.
-    return Math.max(1, this.reference() ?? 0, ...perBucket.values());
+    return Math.max(1, ...perBucket.values());
   });
 
-  /** Where a limit or threshold sits on the axis, when one was given. */
+  private readonly max = computed(() =>
+    this.referenceFits() ? Math.max(this.dataMax(), this.reference() ?? 0) : this.dataMax(),
+  );
+
+  /**
+   * Whether the limit can share an axis with the data.
+   *
+   * A healthy service is the case this gets wrong: 16 MB against a 256 MB cap
+   * put the top of the axis sixteen times above every point, and the series
+   * anyone was reading became a flat line on the floor — the healthier the
+   * service, the less readable its own chart. So the limit only takes part in
+   * the scale when the data is within reach of it, which is exactly when "am I
+   * near the cap" is the question being asked. Otherwise the axis belongs to
+   * the data and the cap is reported as a figure instead.
+   */
+  private readonly referenceFits = computed(() => {
+    const reference = this.reference();
+
+    return reference !== null && reference > 0 && reference <= this.dataMax() * REFERENCE_HEADROOM;
+  });
+
+  /** Where a limit or threshold sits on the axis, when one was given and it
+   * fits. */
   protected readonly referenceLine = computed(() => {
     const reference = this.reference();
 
-    if (reference === null || reference <= 0) {
+    if (!this.referenceFits() || reference === null) {
       return null;
     }
 
     return { y: this.y(reference, this.max()), label: this.format()(reference) };
+  });
+
+  /** The same fact the line would have carried, for when it is off the scale:
+   * what is being used, out of what, as a share. */
+  protected readonly headroom = computed(() => {
+    const reference = this.reference();
+
+    if (reference === null || reference <= 0 || this.referenceFits()) {
+      return '';
+    }
+
+    const peak = this.dataMax();
+    const share = Math.round((peak / reference) * 100);
+
+    return `${this.format()(peak)} of ${this.format()(reference)} (${share < 1 ? '<1' : share}%)`;
   });
 
   protected readonly gridLines = computed(() => {
