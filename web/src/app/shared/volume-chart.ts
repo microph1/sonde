@@ -52,7 +52,7 @@ const LABEL_CHARS = 17;
       </figcaption>
 
       @if (series().length === 0) {
-        <p class="empty">Nothing reported in this window.</p>
+        <p class="empty">{{ empty() }}</p>
       } @else {
         <svg
           [attr.viewBox]="viewBox"
@@ -251,6 +251,11 @@ export class VolumeChart {
   readonly reference = input<number | null>(null);
   readonly format = input<(value: number) => string>(compact);
   readonly title = input('Volume');
+  /** What an absence means here. The caller is the one that knows whether
+   * nothing was reported or whether there is not yet enough of it to draw a
+   * rate from — one bucket of a brand new counter is a reading with nothing
+   * to subtract. */
+  readonly empty = input('Nothing reported in this window.');
   readonly unit = input('per bucket');
 
   protected readonly view = VIEW;

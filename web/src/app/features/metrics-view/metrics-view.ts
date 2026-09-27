@@ -42,6 +42,7 @@ import { VolumeChart } from '../../shared/volume-chart';
       <section class="detail fx-mb-6">
         <wt-volume-chart
           [points]="(points$ | async) ?? []"
+          [empty]="absence(metric)"
           [reference]="(reference$ | async) ?? null"
           [format]="formatter(metric)"
           [title]="metric.name"
