@@ -1,5 +1,8 @@
 import { ChangeDetectionStrategy, Component, Input } from '@angular/core';
 import { AsyncPipe } from '@angular/common';
+import { MatButtonModule } from '@angular/material/button';
+import { MatIconModule } from '@angular/material/icon';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { Subject, map, startWith, switchMap, timer } from 'rxjs';
 
 /**
@@ -12,62 +15,43 @@ import { Subject, map, startWith, switchMap, timer } from 'rxjs';
  */
 @Component({
   selector: 'wt-copy',
-  imports: [AsyncPipe],
+  imports: [AsyncPipe, MatButtonModule, MatIconModule, MatTooltipModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <button
-      type="button"
-      [class.done]="copied$ | async"
-      [attr.aria-label]="label"
-      [title]="title || label"
-      (click)="copy()"
-    >
-      @if (copied$ | async) {
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8.5l3.5 3.5 7-7" /></svg>
-      } @else {
-        <svg viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
-          <path d="M10.5 3.5h-7a1 1 0 0 0-1 1v7" />
-        </svg>
-      }
-
-      @if (text) {
-        <span>{{ (copied$ | async) ? 'Copied' : text }}</span>
-      }
-    </button>
+    @if (text) {
+      <button
+        mat-stroked-button
+        type="button"
+        [class.done]="copied$ | async"
+        [attr.aria-label]="label"
+        [matTooltip]="title || label"
+        (click)="copy()"
+      >
+        <mat-icon>{{ (copied$ | async) ? 'check' : 'content_copy' }}</mat-icon>
+        {{ (copied$ | async) ? 'Copied' : text }}
+      </button>
+    } @else {
+      <button
+        mat-icon-button
+        type="button"
+        [class.done]="copied$ | async"
+        [attr.aria-label]="label"
+        [matTooltip]="title || label"
+        (click)="copy()"
+      >
+        <mat-icon>{{ (copied$ | async) ? 'check' : 'content_copy' }}</mat-icon>
+      </button>
+    }
   `,
   styles: `
-    button {
-      display: inline-flex;
-      align-items: center;
-      gap: var(--fx-3xs);
-      padding: 0.15rem 0.4rem;
-      background: transparent;
-      color: var(--text-dim);
-      line-height: 1;
-    }
-
-    button:hover:not(:disabled) {
-      color: var(--text);
-    }
-
     button.done {
-      border-color: var(--ok);
       color: var(--ok);
     }
 
-    svg {
-      width: 0.95em;
-      height: 0.95em;
-      fill: none;
-      stroke: currentColor;
-      stroke-width: 1.5;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-
-    span {
-      font-size: var(--fx-typography--1);
+    mat-icon {
+      font-size: 1.05rem;
+      width: 1.05rem;
+      height: 1.05rem;
     }
   `,
 })

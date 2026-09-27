@@ -1,4 +1,9 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
+import { MatButtonModule } from '@angular/material/button';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatIconModule } from '@angular/material/icon';
+import { MatInputModule } from '@angular/material/input';
+import { MatSelectModule } from '@angular/material/select';
 import { AsyncPipe, DatePipe } from '@angular/common';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
@@ -10,30 +15,58 @@ import { DurationPipe } from '../../shared/duration-pipe';
 
 @Component({
   selector: 'wt-traces-view',
-  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, DurationPipe],
+  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, DurationPipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <h1>Traces</h1>
 
     <form [formGroup]="filters" (ngSubmit)="run()" class="filters fx-flex fx-flex-wrap fx-items-end fx-gap-3 fx-mb-4">
-      <label>Service <input formControlName="service" placeholder="any" class="mono" /></label>
-      <label>Span name <input formControlName="name" placeholder="any" class="mono" /></label>
-      <label>
-        Status
-        <select formControlName="status">
-          <option value="">any</option>
-          <option value="Ok">Ok</option>
-          <option value="Error">Error</option>
-          <option value="Unset">Unset</option>
-        </select>
-      </label>
-      <label>Slower than (ms) <input formControlName="minDurationMs" type="number" min="0" /></label>
-      <label>Limit <input formControlName="limit" type="number" min="1" /></label>
-      <button type="submit" [disabled]="(live$ | async) ?? false">Search</button>
+      <mat-form-field subscriptSizing="dynamic">
+        <mat-label>Service</mat-label>
+        <input matInput formControlName="service" placeholder="any" class="mono" />
+      </mat-form-field>
+
+      <mat-form-field subscriptSizing="dynamic">
+        <mat-label>Span name</mat-label>
+        <input matInput formControlName="name" placeholder="any" class="mono" />
+      </mat-form-field>
+
+      <mat-form-field subscriptSizing="dynamic" class="narrow">
+        <mat-label>Status</mat-label>
+        <mat-select formControlName="status">
+          <mat-option value="">any</mat-option>
+          <mat-option value="Ok">Ok</mat-option>
+          <mat-option value="Error">Error</mat-option>
+          <mat-option value="Unset">Unset</mat-option>
+        </mat-select>
+      </mat-form-field>
+
+      <mat-form-field subscriptSizing="dynamic" class="narrow">
+        <mat-label>Slower than</mat-label>
+        <input matInput formControlName="minDurationMs" type="number" min="0" />
+        <span matTextSuffix>ms</span>
+      </mat-form-field>
+
+      <mat-form-field subscriptSizing="dynamic" class="narrow">
+        <mat-label>Limit</mat-label>
+        <input matInput formControlName="limit" type="number" min="1" />
+      </mat-form-field>
+
+      <button mat-flat-button type="submit" [disabled]="(live$ | async) ?? false">
+        <mat-icon>search</mat-icon>
+        Search
+      </button>
+
       @if ((live$ | async) === true) {
-        <button type="button" (click)="stop()">Stop tail</button>
+        <button mat-stroked-button type="button" (click)="stop()">
+          <mat-icon>stop</mat-icon>
+          Stop tail
+        </button>
       } @else {
-        <button type="button" (click)="startLive()">Live tail</button>
+        <button mat-stroked-button type="button" (click)="startLive()">
+          <mat-icon>bolt</mat-icon>
+          Live tail
+        </button>
       }
     </form>
 
@@ -79,6 +112,14 @@ import { DurationPipe } from '../../shared/duration-pipe';
     </table>
   `,
   styles: `
+    .filters mat-form-field {
+      min-width: 12rem;
+    }
+
+    .filters mat-form-field.narrow {
+      min-width: 7.5rem;
+    }
+
     /* Layout is in the template; this is what the utilities do not cover. */
     .filters label {
       display: flex;

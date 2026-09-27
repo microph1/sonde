@@ -1,5 +1,9 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
 import { AsyncPipe } from '@angular/common';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
+import { MatRippleModule } from '@angular/material/core';
+import { MatSlideToggleModule } from '@angular/material/slide-toggle';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { map } from 'rxjs';
 
 import { MetricOverview, MetricSummary, MetricsStore } from '../../core/metrics.store';
@@ -9,7 +13,15 @@ import { VolumeChart } from '../../shared/volume-chart';
 
 @Component({
   selector: 'wt-metrics-view',
-  imports: [AsyncPipe, VolumeChart, Sparkline],
+  imports: [
+    AsyncPipe,
+    VolumeChart,
+    Sparkline,
+    MatButtonToggleModule,
+    MatSlideToggleModule,
+    MatRippleModule,
+    MatTooltipModule,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <header class="fx-flex fx-items-center fx-flex-wrap fx-gap-4 fx-mb-4">
@@ -17,25 +29,28 @@ import { VolumeChart } from '../../shared/volume-chart';
 
       @if (selected$ | async; as metric) {
         @if (metric.kind === 'sum') {
-          <label class="control">
-            <input type="checkbox" [checked]="(rate$ | async) ?? false" (change)="toggleRate($event)" />
+          <mat-slide-toggle
+            [checked]="(rate$ | async) ?? false"
+            (change)="toggleRate($event.checked)"
+            matTooltip="Read the counter as a per-second rate rather than a running total"
+          >
             per second
-          </label>
+          </mat-slide-toggle>
         }
       }
 
-      <div class="ranges fx-flex fx-gap-1 fx-ml-a" role="group" aria-label="Time range">
+      <mat-button-toggle-group
+        class="fx-ml-a"
+        aria-label="Time range"
+        hideSingleSelectionIndicator
+        [value]="rangeLabel$ | async"
+      >
         @for (option of ranges; track option.label) {
-          <button
-            type="button"
-            [class.active]="option.label === (rangeLabel$ | async)"
-            [attr.aria-pressed]="option.label === (rangeLabel$ | async)"
-            (click)="selectRange(option)"
-          >
+          <mat-button-toggle [value]="option.label" (click)="selectRange(option)">
             {{ option.label }}
-          </button>
+          </mat-button-toggle>
         }
-      </div>
+      </mat-button-toggle-group>
     </header>
 
     @if (selected$ | async; as metric) {
@@ -66,6 +81,7 @@ import { VolumeChart } from '../../shared/volume-chart';
         <button
           type="button"
           class="card"
+          matRipple
           [class.current]="metric.name === (selectedName$ | async)"
           [attr.aria-pressed]="metric.name === (selectedName$ | async)"
           (click)="pick(metric)"
@@ -108,11 +124,6 @@ import { VolumeChart } from '../../shared/volume-chart';
       font-size: var(--fx-typography--1);
     }
 
-    .ranges button.active {
-      border-color: var(--accent);
-      color: var(--text);
-    }
-
     .detail {
       max-width: 60rem;
     }
@@ -127,6 +138,7 @@ import { VolumeChart } from '../../shared/volume-chart';
 
     .card {
       display: grid;
+      transition: border-color 0.12s ease, background 0.12s ease;
       /* Both halves of the same fix: a grid item and a grid track size to auto
          by default, which means as wide as the longest unbreakable thing
          inside. A metric name is one long unbreakable thing, so without these
@@ -218,8 +230,8 @@ export class MetricsView implements OnInit {
     this.store.dispatch('selectRange', range);
   }
 
-  protected toggleRate(event: Event): void {
-    this.store.dispatch('toggleRate', (event.target as HTMLInputElement).checked);
+  protected toggleRate(rate: boolean): void {
+    this.store.dispatch('toggleRate', rate);
   }
 
   /**

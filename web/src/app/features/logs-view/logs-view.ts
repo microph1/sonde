@@ -1,4 +1,9 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
+import { MatButtonModule } from '@angular/material/button';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatIconModule } from '@angular/material/icon';
+import { MatInputModule } from '@angular/material/input';
+import { MatSelectModule } from '@angular/material/select';
 import { AsyncPipe, DatePipe } from '@angular/common';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
@@ -9,30 +14,53 @@ import { LogFilters } from '../../core/telemetry.model';
 
 @Component({
   selector: 'wt-logs-view',
-  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe],
+  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <h1>Logs</h1>
 
     <form [formGroup]="filters" (ngSubmit)="run()" class="filters fx-flex fx-flex-wrap fx-items-end fx-gap-3 fx-mb-4">
-      <label>Service <input formControlName="service" placeholder="any" class="mono" /></label>
-      <label>Body contains <input formControlName="contains" placeholder="any" /></label>
-      <label>
-        Minimum severity
-        <select formControlName="minSeverity">
-          <option [value]="0">any</option>
-          <option [value]="5">DEBUG</option>
-          <option [value]="9">INFO</option>
-          <option [value]="13">WARN</option>
-          <option [value]="17">ERROR</option>
-        </select>
-      </label>
-      <label>Limit <input formControlName="limit" type="number" min="1" /></label>
-      <button type="submit" [disabled]="(live$ | async) ?? false">Search</button>
+      <mat-form-field subscriptSizing="dynamic">
+        <mat-label>Service</mat-label>
+        <input matInput formControlName="service" placeholder="any" class="mono" />
+      </mat-form-field>
+
+      <mat-form-field subscriptSizing="dynamic" class="wide">
+        <mat-label>Body contains</mat-label>
+        <input matInput formControlName="contains" placeholder="any" />
+      </mat-form-field>
+
+      <mat-form-field subscriptSizing="dynamic">
+        <mat-label>Minimum severity</mat-label>
+        <mat-select formControlName="minSeverity">
+          <mat-option [value]="0">any</mat-option>
+          <mat-option [value]="5">DEBUG</mat-option>
+          <mat-option [value]="9">INFO</mat-option>
+          <mat-option [value]="13">WARN</mat-option>
+          <mat-option [value]="17">ERROR</mat-option>
+        </mat-select>
+      </mat-form-field>
+
+      <mat-form-field subscriptSizing="dynamic" class="narrow">
+        <mat-label>Limit</mat-label>
+        <input matInput formControlName="limit" type="number" min="1" />
+      </mat-form-field>
+
+      <button mat-flat-button type="submit" [disabled]="(live$ | async) ?? false">
+        <mat-icon>search</mat-icon>
+        Search
+      </button>
+
       @if ((live$ | async) === true) {
-        <button type="button" (click)="stop()">Stop tail</button>
+        <button mat-stroked-button type="button" (click)="stop()">
+          <mat-icon>stop</mat-icon>
+          Stop tail
+        </button>
       } @else {
-        <button type="button" (click)="startLive()">Live tail</button>
+        <button mat-stroked-button type="button" (click)="startLive()">
+          <mat-icon>bolt</mat-icon>
+          Live tail
+        </button>
       }
     </form>
 
@@ -76,6 +104,18 @@ import { LogFilters } from '../../core/telemetry.model';
     </table>
   `,
   styles: `
+    .filters mat-form-field {
+      min-width: 11rem;
+    }
+
+    .filters mat-form-field.wide {
+      min-width: 18rem;
+    }
+
+    .filters mat-form-field.narrow {
+      min-width: 7.5rem;
+    }
+
     /* Layout is in the template; this is what the utilities do not cover. */
     .filters label {
       display: flex;

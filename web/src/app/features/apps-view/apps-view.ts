@@ -1,10 +1,20 @@
-import { ChangeDetectionStrategy, Component, ElementRef, OnInit, ViewChild, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, OnInit, inject } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AsyncPipe, DatePipe } from '@angular/common';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
-import { BehaviorSubject, combineLatest, map, startWith } from 'rxjs';
+import { MatButtonModule } from '@angular/material/button';
+import { MatCardModule } from '@angular/material/card';
+import { MatDialog, MatDialogModule } from '@angular/material/dialog';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatIconModule } from '@angular/material/icon';
+import { MatInputModule } from '@angular/material/input';
+import { MatRadioModule } from '@angular/material/radio';
+import { MatTooltipModule } from '@angular/material/tooltip';
+import { BehaviorSubject, combineLatest, filter, map, startWith } from 'rxjs';
 
 import { ApiKey, App, AppsStore, KeyKind } from '../../core/apps.store';
 import { CopyButton } from '../../shared/copy-button';
+import { IssuedKeyDialog } from './issued-key.dialog';
 
 interface AppCard extends App {
   readonly keys: ApiKey[];
@@ -14,7 +24,20 @@ interface AppCard extends App {
 
 @Component({
   selector: 'wt-apps-view',
-  imports: [ReactiveFormsModule, AsyncPipe, DatePipe, CopyButton],
+  imports: [
+    ReactiveFormsModule,
+    AsyncPipe,
+    DatePipe,
+    CopyButton,
+    MatCardModule,
+    MatButtonModule,
+    MatIconModule,
+    MatFormFieldModule,
+    MatInputModule,
+    MatRadioModule,
+    MatTooltipModule,
+    MatDialogModule,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <header class="fx-flex fx-flex-wrap fx-items-start fx-gap-4 fx-mb-5">
@@ -29,80 +52,48 @@ interface AppCard extends App {
       </div>
 
       <form [formGroup]="appForm" (ngSubmit)="createApp()" class="new-app fx-flex fx-gap-2 fx-ml-a">
-        <input formControlName="name" placeholder="New app name" aria-label="New app name" />
-        <button type="submit" [disabled]="appForm.invalid">Create app</button>
+        <mat-form-field subscriptSizing="dynamic">
+          <mat-label>New app</mat-label>
+          <input matInput formControlName="name" placeholder="microgamma" />
+        </mat-form-field>
+
+        <button mat-flat-button type="submit" [disabled]="appForm.invalid">
+          <mat-icon>add</mat-icon>
+          Create app
+        </button>
       </form>
     </header>
 
-    @if (issued$ | async; as issued) {
-      <div class="overlay" (click)="close()">
-        <aside
-          #panel
-          class="issued fx-p-4"
-          role="dialog"
-          aria-modal="true"
-          tabindex="-1"
-          [attr.aria-label]="issued.name + ' issued'"
-          (click)="$event.stopPropagation()"
-          (keydown.escape)="close()"
-        >
-          <div class="fx-flex fx-items-baseline fx-gap-2 fx-flex-wrap">
-            <strong>{{ issued.name }} issued.</strong>
-            <span class="dim">
-              Copy it now — sonde keeps only a hash, so this is the last time anyone can read it.
-            </span>
-          </div>
-
-          <div class="secret fx-flex fx-items-center fx-gap-2 fx-my-3">
-            <code>{{ issued.secret }}</code>
-            <wt-copy [value]="issued.secret" label="Copy the key" text="Copy" />
-          </div>
-
-          <dl class="snippets">
-            <div>
-              <dt class="dim">Header</dt>
-              <dd>
-                <code>Authorization: Bearer {{ issued.secret }}</code>
-                <wt-copy [value]="header(issued.secret)" label="Copy the Authorization header" />
-              </dd>
-            </div>
-            <div>
-              <dt class="dim">Env</dt>
-              <dd>
-                <code>OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20{{ issued.secret }}</code>
-                <wt-copy [value]="env(issued.secret)" label="Copy the exporter environment variable" />
-              </dd>
-            </div>
-          </dl>
-
-          <button type="button" class="fx-mt-3" (click)="close()">Done</button>
-        </aside>
-      </div>
-    }
-
     <section class="cards">
       @for (app of cards$ | async; track app.id) {
-        <article class="card">
-          <header class="fx-flex fx-items-baseline fx-flex-wrap fx-gap-2 fx-p-3">
-            <h2 class="mono">{{ app.name }}</h2>
-            <span class="dim">
+        <mat-card appearance="outlined">
+          <mat-card-header>
+            <mat-card-title class="mono">{{ app.name }}</mat-card-title>
+            <mat-card-subtitle>
               {{ app.live }} live {{ app.live === 1 ? 'key' : 'keys' }}<!--
               -->{{ app.revoked ? ' · ' + app.revoked + ' revoked' : '' }} · created
               {{ app.createdAt | date: 'MMM d, y' }}
-            </span>
+            </mat-card-subtitle>
 
             <span class="fx-ml-a">
               @if ((confirming$ | async) === app.id) {
                 <span class="fx-flex fx-items-center fx-gap-2">
                   <span class="dim">Delete {{ app.name }}?</span>
-                  <button type="button" class="danger" (click)="deleteApp(app)">Delete</button>
-                  <button type="button" class="ghost" (click)="cancel()">Cancel</button>
+                  <button mat-flat-button class="danger" (click)="deleteApp(app)">Delete</button>
+                  <button mat-button (click)="cancel()">Cancel</button>
                 </span>
               } @else {
-                <button type="button" class="ghost" (click)="ask(app.id)">Delete</button>
+                <button
+                  mat-icon-button
+                  matTooltip="Delete this app and its keys"
+                  aria-label="Delete this app"
+                  (click)="ask(app.id)"
+                >
+                  <mat-icon>delete</mat-icon>
+                </button>
               }
             </span>
-          </header>
+          </mat-card-header>
 
           <ul class="keys">
             @for (key of app.keys; track key.id) {
@@ -124,7 +115,7 @@ interface AppCard extends App {
                   {{ key.createdAt | date: 'MMM d' }}
                 </time>
 
-                <span class="actions fx-flex fx-items-center fx-gap-1">
+                <span class="actions fx-flex fx-items-center">
                   <wt-copy
                     [value]="key.hint"
                     label="Copy the key prefix"
@@ -132,12 +123,19 @@ interface AppCard extends App {
                   />
 
                   @if (key.revoked) {
-                    <span class="dim">revoked</span>
+                    <span class="dim revoked-label">revoked</span>
                   } @else if ((confirming$ | async) === key.id) {
-                    <button type="button" class="danger" (click)="revoke(key.id)">Revoke</button>
-                    <button type="button" class="ghost" (click)="cancel()">Cancel</button>
+                    <button mat-flat-button class="danger" (click)="revoke(key.id)">Revoke</button>
+                    <button mat-button (click)="cancel()">Cancel</button>
                   } @else {
-                    <button type="button" class="ghost" (click)="ask(key.id)">Revoke</button>
+                    <button
+                      mat-icon-button
+                      matTooltip="Revoke this key"
+                      aria-label="Revoke this key"
+                      (click)="ask(key.id)"
+                    >
+                      <mat-icon>block</mat-icon>
+                    </button>
                   }
                 </span>
               </li>
@@ -146,55 +144,50 @@ interface AppCard extends App {
             }
           </ul>
 
-          @if ((issuingFor$ | async) === app.id) {
-            <form [formGroup]="keyForm" (ngSubmit)="issueKey()" class="issue fx-p-3">
-              <label>
-                Name
-                <input formControlName="name" placeholder="relay" />
-              </label>
+          <mat-card-actions>
+            @if ((issuingFor$ | async) === app.id) {
+              <form [formGroup]="keyForm" (ngSubmit)="issueKey()" class="issue">
+                <mat-form-field subscriptSizing="dynamic">
+                  <mat-label>Name</mat-label>
+                  <input matInput formControlName="name" placeholder="relay" />
+                </mat-form-field>
 
-              <fieldset class="kinds">
-                <legend>Kind</legend>
-                <label class="choice">
-                  <input type="radio" formControlName="kind" value="secret" />
-                  <span>secret <small class="dim">backends</small></span>
-                </label>
-                <label class="choice">
-                  <input type="radio" formControlName="kind" value="public" />
-                  <span>public <small class="dim">browsers</small></span>
-                </label>
-              </fieldset>
+                <mat-radio-group formControlName="kind" aria-label="Kind" class="kinds">
+                  <mat-radio-button value="secret">secret <small class="dim">backends</small></mat-radio-button>
+                  <mat-radio-button value="public">public <small class="dim">browsers</small></mat-radio-button>
+                </mat-radio-group>
 
-              @if ((kind$ | async) === 'public') {
-                <label class="origins-field">
-                  Allowed origins
-                  <input
-                    formControlName="origins"
-                    placeholder="http://app.localhost, https://app.example"
-                    aria-describedby="origins-help"
-                  />
-                  <small id="origins-help" class="dim">
-                    A public key ships to browsers, so anyone who opens devtools can read it.
-                    Origins are what make it useful anyway — comma separated. Left empty, the
-                    key is accepted from anywhere.
-                  </small>
-                </label>
-              }
+                @if ((kind$ | async) === 'public') {
+                  <mat-form-field class="origins-field" subscriptSizing="dynamic">
+                    <mat-label>Allowed origins</mat-label>
+                    <input matInput formControlName="origins" placeholder="http://app.localhost, https://app.example" />
+                    <mat-hint>
+                      A public key ships to browsers, so anyone who opens devtools can read it.
+                      Comma separated. Left empty, the key is accepted from anywhere.
+                    </mat-hint>
+                  </mat-form-field>
+                }
 
-              <div class="fx-flex fx-gap-2 fx-items-center">
-                <button type="submit" [disabled]="keyForm.invalid">Issue key</button>
-                <button type="button" class="ghost" (click)="cancelIssue()">Cancel</button>
-              </div>
-            </form>
-          } @else {
-            <button type="button" class="add" (click)="startIssue(app)">Issue a key</button>
-          }
-        </article>
+                <span class="fx-flex fx-gap-2 fx-items-center">
+                  <button mat-flat-button type="submit" [disabled]="keyForm.invalid">Issue key</button>
+                  <button mat-button type="button" (click)="cancelIssue()">Cancel</button>
+                </span>
+              </form>
+            } @else {
+              <button mat-button (click)="startIssue(app)">
+                <mat-icon>add</mat-icon>
+                Issue a key
+              </button>
+            }
+          </mat-card-actions>
+        </mat-card>
       } @empty {
-        <p class="none dim fx-p-4">
-          No apps yet. Telemetry can still arrive while ingest auth is off; name an app above
-          to start requiring a key.
-        </p>
+        <mat-card appearance="outlined">
+          <mat-card-content class="dim">
+            No apps yet. Telemetry can still arrive while ingest auth is off; name an app above
+            to start requiring a key.
+          </mat-card-content>
+        </mat-card>
       }
     </section>
   `,
@@ -212,14 +205,8 @@ interface AppCard extends App {
       margin: 0;
     }
 
-    .new-app input {
-      min-width: 12rem;
-    }
-
-    h2 {
-      margin: 0;
-      font-size: var(--fx-typography-1);
-      font-weight: 600;
+    .new-app mat-form-field {
+      min-width: 14rem;
     }
 
     .cards {
@@ -227,15 +214,13 @@ interface AppCard extends App {
       gap: var(--fx-s);
     }
 
-    .card {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: var(--surface);
-      overflow: hidden;
+    mat-card-header {
+      align-items: center;
+      gap: var(--fx-2xs);
     }
 
-    .card > header {
-      border-bottom: 1px solid var(--line);
+    mat-card-title.mono {
+      font-size: var(--fx-typography-1);
     }
 
     /* One grid for the whole list so every row lines up, rather than each row
@@ -246,6 +231,7 @@ interface AppCard extends App {
       margin: 0;
       padding: 0;
       list-style: none;
+      border-top: 1px solid var(--mat-sys-outline-variant);
     }
 
     .key {
@@ -254,22 +240,19 @@ interface AppCard extends App {
       grid-template-columns: subgrid;
       align-items: center;
       gap: var(--fx-xs);
-      padding: var(--fx-2xs) var(--fx-s);
-      border-bottom: 1px solid var(--line);
+      padding: var(--fx-3xs) var(--fx-s);
+      border-bottom: 1px solid var(--mat-sys-outline-variant);
     }
 
     .key:hover {
       background: var(--surface-raised);
     }
 
-    .hint {
-      color: var(--text);
-    }
-
     .what {
       display: flex;
       flex-direction: column;
       line-height: 1.3;
+      min-width: 0;
     }
 
     .origins {
@@ -282,7 +265,7 @@ interface AppCard extends App {
 
     .badge {
       padding: 0.05rem 0.45rem;
-      border: 1px solid var(--line);
+      border: 1px solid var(--mat-sys-outline-variant);
       border-radius: 999px;
       background: var(--bg);
       color: var(--text-dim);
@@ -307,185 +290,45 @@ interface AppCard extends App {
       opacity: 0.45;
     }
 
+    .revoked-label {
+      padding-inline: var(--fx-2xs);
+      font-size: var(--fx-typography--1);
+    }
+
     .none {
       padding: var(--fx-2xs) var(--fx-s);
       grid-column: 1 / -1;
     }
 
-    .add {
-      width: 100%;
-      border: 0;
-      border-radius: 0;
-      background: transparent;
-      color: var(--accent);
-      text-align: left;
-      padding: var(--fx-2xs) var(--fx-s);
-    }
-
-    .add:hover {
-      background: var(--surface-raised);
-    }
-
-    /* Quiet by default, loud on intent: a destructive action should not be the
-       most prominent thing in a row it happens to share with four facts. */
-    button.ghost {
-      border-color: transparent;
-      background: transparent;
-      color: var(--text-dim);
-    }
-
-    button.ghost:hover:not(:disabled) {
-      border-color: var(--line);
-      color: var(--text);
-    }
-
-    button.danger {
-      border-color: color-mix(in srgb, var(--error) 60%, transparent);
-      background: color-mix(in srgb, var(--error) 15%, transparent);
-      color: var(--error);
-    }
-
-    button.danger:hover:not(:disabled) {
-      border-color: var(--error);
-    }
-
     .issue {
       display: flex;
       flex-wrap: wrap;
-      align-items: flex-end;
+      align-items: center;
       gap: var(--fx-s);
-      background: var(--surface-raised);
-    }
-
-    .issue label {
-      display: flex;
-      flex-direction: column;
-      gap: var(--fx-3xs);
-      color: var(--text-dim);
-      font-size: var(--fx-typography--1);
+      width: 100%;
     }
 
     .origins-field {
       flex: 1 1 24rem;
     }
 
-    .origins-field small {
-      max-width: 60ch;
-      font-size: var(--fx-typography--2);
-    }
-
     .kinds {
       display: flex;
       gap: var(--fx-2xs);
-      margin: 0;
-      padding: 0;
-      border: 0;
     }
 
-    .kinds legend {
-      padding: 0;
-      color: var(--text-dim);
-      font-size: var(--fx-typography--1);
-    }
-
-    .choice {
-      flex-direction: row !important;
-      align-items: center;
-      gap: var(--fx-3xs) !important;
-      padding: var(--fx-3xs) var(--fx-2xs);
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--surface);
-      cursor: pointer;
-    }
-
-    .choice:has(input:checked) {
-      border-color: var(--accent);
-      color: var(--text);
-    }
-
-    /* The one-time secret takes over the screen, because it is the one moment
-       on this page that cannot be repeated: issuing from the last card used to
-       scroll a banner in at the top, out of sight, and the key was gone. */
-    .overlay {
-      position: fixed;
-      inset: 0;
-      z-index: 10;
-      display: grid;
-      place-items: center;
-      padding: var(--fx-s);
-      background: color-mix(in srgb, #000 65%, transparent);
-    }
-
-    .issued {
-      width: min(48rem, 100%);
-      border: 1px solid var(--ok);
-      border-radius: 10px;
-      background: var(--surface);
-      box-shadow: 0 1.5rem 3rem rgb(0 0 0 / 45%);
-    }
-
-    /* The panel takes focus so Escape reaches it, but it is a container rather
-       than a control, and ringing it adds nothing a reader can act on. */
-    .issued:focus-visible {
-      outline: none;
-    }
-
-    .secret code {
-      flex: 1;
-      padding: var(--fx-2xs);
-      border-radius: 6px;
-      background: var(--bg);
-      overflow-wrap: anywhere;
-      user-select: all;
-      font-size: var(--fx-typography-1);
-    }
-
-    .snippets {
-      display: grid;
-      gap: var(--fx-3xs);
-      margin: 0;
-    }
-
-    .snippets div {
-      display: grid;
-      grid-template-columns: 4rem 1fr;
-      align-items: center;
-      gap: var(--fx-2xs);
-    }
-
-    .snippets dt {
-      font-size: var(--fx-typography--1);
-    }
-
-    .snippets dd {
-      display: flex;
-      align-items: center;
-      gap: var(--fx-3xs);
-      margin: 0;
-      min-width: 0;
-    }
-
-    .snippets code {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    /* Destructive actions are quiet until asked for, and unmistakable once the
+       question is on screen. */
+    .danger {
+      --mdc-filled-button-container-color: color-mix(in srgb, var(--error) 22%, transparent);
+      --mdc-filled-button-label-text-color: var(--error);
     }
   `,
 })
 export class AppsView implements OnInit {
   private readonly store = inject(AppsStore);
-
-  protected readonly issued$ = this.store.issued$;
-
-  /** Focus follows the dialog in, which is what makes Escape work and what
-   * puts a screen reader on the key rather than on the page behind it. A
-   * setter rather than ngAfterViewInit because the panel comes and goes with
-   * the `@if`. */
-  @ViewChild('panel')
-  protected set panel(element: ElementRef<HTMLElement> | undefined) {
-    element?.nativeElement.focus();
-  }
+  private readonly dialog = inject(MatDialog);
+  private readonly destroyRef = inject(DestroyRef);
 
   /** Keys live inside the app they authenticate, because that is the only
    * relationship either list has. Flat and side by side, reading one meant
@@ -528,6 +371,19 @@ export class AppsView implements OnInit {
   protected readonly kind$ = this.keyForm.controls.kind.valueChanges.pipe(
     startWith(this.keyForm.controls.kind.value),
   );
+
+  constructor() {
+    // The secret exists for one render and nowhere else, so it takes over the
+    // screen rather than appearing somewhere the page may not be scrolled to.
+    this.store.issued$
+      .pipe(filter(Boolean), takeUntilDestroyed(this.destroyRef))
+      .subscribe((issued) => {
+        this.dialog
+          .open(IssuedKeyDialog, { data: issued, width: '44rem', maxWidth: '92vw' })
+          .afterClosed()
+          .subscribe(() => this.store.dispatch('dismissIssued'));
+      });
+  }
 
   ngOnInit(): void {
     this.store.dispatch('loadApps');
@@ -583,17 +439,5 @@ export class AppsView implements OnInit {
   protected revoke(keyId: string): void {
     this.store.dispatch('revokeKey', keyId);
     this.confirming$$.next(null);
-  }
-
-  protected close(): void {
-    this.store.dispatch('dismissIssued');
-  }
-
-  protected header(secret: string): string {
-    return `Authorization: Bearer ${secret}`;
-  }
-
-  protected env(secret: string): string {
-    return `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20${secret}`;
   }
 }

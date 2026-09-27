@@ -35,7 +35,7 @@ export interface MetricOverview extends MetricSummary {
 export interface MetricsState {
   catalogue: MetricOverview[];
   overview: MetricOverview[];
-  selected: MetricSummary | null;
+  selected: MetricOverview | null;
   points: SeriesPoint[];
   range: Range;
   rate: boolean;
@@ -46,7 +46,7 @@ export interface MetricsState {
 export interface MetricsActions {
   loadCatalogue: () => Observable<MetricOverview[]>;
   loadOverview: (range: Range) => Observable<MetricOverview[]>;
-  selectMetric: (key: string) => Observable<MetricSummary>;
+  selectMetric: (key: string) => Observable<MetricOverview>;
   selectRange: (range: Range) => Observable<Range>;
   toggleRate: (rate: boolean) => Observable<boolean>;
   loadSeries: (query: SeriesQuery) => Observable<SeriesPoint[]>;
@@ -135,7 +135,7 @@ export class MetricsStore
   /** Takes a `name|kind` key rather than the object, so the view can dispatch
    * straight from a select element without resolving anything itself. */
   @Effect()
-  selectMetric(key: string): Observable<MetricSummary> {
+  selectMetric(key: string): Observable<MetricOverview> {
     const [name, kind] = key.split('|');
     const found = this._store$
       .getValue()
@@ -145,7 +145,7 @@ export class MetricsStore
   }
 
   @Reduce()
-  onSelectMetric(state: MetricsState, selected: MetricSummary): MetricsState {
+  onSelectMetric(state: MetricsState, selected: MetricOverview): MetricsState {
     // A rate is meaningless for a gauge and the only sane reading of a
     // monotonic counter, so the toggle follows the instrument by default.
     return { ...state, selected, rate: selected.kind === 'sum' && selected.monotonic === 1 };

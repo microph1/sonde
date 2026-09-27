@@ -1,5 +1,8 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
 import { AsyncPipe, DatePipe, DecimalPipe } from '@angular/common';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatSelectModule } from '@angular/material/select';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { combineLatest, filter, map, startWith, withLatestFrom } from 'rxjs';
@@ -9,33 +12,40 @@ import { VolumeChart } from '../../shared/volume-chart';
 
 @Component({
   selector: 'wt-services-view',
-  imports: [RouterLink, AsyncPipe, DatePipe, DecimalPipe, VolumeChart],
+  imports: [
+    RouterLink,
+    AsyncPipe,
+    DatePipe,
+    DecimalPipe,
+    VolumeChart,
+    MatButtonToggleModule,
+    MatFormFieldModule,
+    MatSelectModule,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (range$ | async; as range) {
       <header class="fx-flex fx-items-center fx-gap-4 fx-mb-4">
         <h1>Services</h1>
-        <label class="grouping fx-ml-a">
-          Group by
-          <select [value]="(grouping$ | async) ?? 'service'" (change)="selectGrouping($event)">
+        <mat-form-field class="grouping fx-ml-a" subscriptSizing="dynamic">
+          <mat-label>Group by</mat-label>
+          <mat-select
+            [value]="(grouping$ | async) ?? 'service'"
+            (selectionChange)="selectGrouping($event.value)"
+          >
             @for (option of groupings$ | async; track option.key) {
-              <option [value]="option.key">{{ option.label }}</option>
+              <mat-option [value]="option.key">{{ option.label }}</mat-option>
             }
-          </select>
-        </label>
+          </mat-select>
+        </mat-form-field>
 
-        <div class="ranges fx-flex fx-gap-1" role="group" aria-label="Time range">
+        <mat-button-toggle-group aria-label="Time range" hideSingleSelectionIndicator [value]="range.label">
           @for (option of ranges; track option.label) {
-            <button
-              type="button"
-              [class.active]="option.label === range.label"
-              [attr.aria-pressed]="option.label === range.label"
-              (click)="select(option)"
-            >
+            <mat-button-toggle [value]="option.label" (click)="select(option)">
               {{ option.label }}
-            </button>
+            </mat-button-toggle>
           }
-        </div>
+        </mat-button-toggle-group>
       </header>
 
       <div class="tiles fx-gap-2 fx-mb-5">
@@ -124,10 +134,6 @@ import { VolumeChart } from '../../shared/volume-chart';
       font-size: var(--fx-typography--1);
     }
 
-    .ranges button.active {
-      border-color: var(--accent);
-      color: var(--text);
-    }
 
     .tile {
       border: 1px solid var(--line);
@@ -306,8 +312,8 @@ export class ServicesView implements OnInit {
     }
   }
 
-  protected selectGrouping(event: Event): void {
-    this.store.dispatch('selectGrouping', (event.target as HTMLSelectElement).value);
+  protected selectGrouping(key: string): void {
+    this.store.dispatch('selectGrouping', key);
   }
 
   protected select(range: Range): void {

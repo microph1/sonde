@@ -1,4 +1,6 @@
+@use '@angular/material' as mat;
 @use 'utopia-core-scss/src/utopia' as utopia;
+@use 'material-symbols/rounded';
 
 // @microphi utility partials — pure CSS emitters, pulled in individually rather
 // than through main.scss, which still uses the deprecated @import.
@@ -16,6 +18,33 @@
 @use '@microphi/styles/scss/text-transform';
 @use '@microphi/styles/scss/opacity';
 @use '@microphi/styles/scss/helpers';
+
+
+// Angular Material, themed rather than adopted wholesale.
+//
+// The components come from Material - focus states, menus, dialogs, tables and
+// the accessibility that goes with them are not worth hand-rolling twice. The
+// colours do not: a telemetry console is read for hours against a dark surface,
+// and the palette below was picked and contrast-checked for that. So the theme
+// is generated and then its system tokens are pointed at our own variables,
+// which keeps one source of truth for colour instead of two that drift.
+//
+// Density -2 because Material's defaults are sized for touch, and every screen
+// here is a table or a chart being scanned.
+html {
+  @include mat.theme((
+    color: (
+      primary: mat.$azure-palette,
+      tertiary: mat.$cyan-palette,
+      theme-type: dark,
+    ),
+    typography: (
+      plain-family: (ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif),
+      brand-family: (ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif),
+    ),
+    density: -2,
+  ));
+}
 
 :root {
   color-scheme: dark;
@@ -63,6 +92,27 @@
   --ok: #3fb950;
   --warn: #d29922;
   --error: #f85149;
+}
+
+html {
+  // Material reads these; our components read the ones above. Same values, so
+  // a Material button and a hand-drawn chart cannot disagree about a colour.
+  --mat-sys-background: var(--bg);
+  --mat-sys-surface: var(--surface);
+  --mat-sys-surface-container: var(--surface);
+  --mat-sys-surface-container-low: var(--surface);
+  --mat-sys-surface-container-high: var(--surface-raised);
+  --mat-sys-surface-container-highest: var(--surface-raised);
+  --mat-sys-on-surface: var(--text);
+  --mat-sys-on-surface-variant: var(--text-dim);
+  --mat-sys-outline: var(--line);
+  --mat-sys-outline-variant: var(--line);
+  --mat-sys-primary: var(--accent);
+  --mat-sys-on-primary: #05203a;
+  --mat-sys-error: var(--error);
+  --mat-sys-corner-small: 6px;
+  --mat-sys-corner-medium: 10px;
+  --mat-sys-corner-large: 10px;
 }
 
 * {
