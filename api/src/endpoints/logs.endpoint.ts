@@ -16,6 +16,12 @@ export interface LogFilters extends SearchFilters {
   /** Substring match on the log body. */
   readonly contains?: string;
   readonly traceId?: string;
+  /**
+   * The instrumentation scope, exactly. For a Rust service that is the module
+   * path the record came from — `libp2p_discovery::session` — which makes it
+   * the closest thing logs have to a component filter.
+   */
+  readonly scope?: string;
 }
 
 @Endpoint({
@@ -36,6 +42,7 @@ export class LogsEndpoint {
       minSeverity: Math.max(0, Math.floor(filters.minSeverity ?? 0)),
       contains: filters.contains ?? '',
       traceId: filters.traceId ?? '',
+      scope: filters.scope ?? '',
     };
 
     return this.clickhouse.stream(
@@ -46,6 +53,7 @@ export class LogsEndpoint {
          AND SeverityNumber >= {minSeverity:Int32}
          AND ({contains:String} = '' OR positionCaseInsensitive(Body, {contains:String}) > 0)
          AND ({traceId:String} = '' OR TraceId = {traceId:String})
+         AND ({scope:String} = '' OR ScopeName = {scope:String})
        ORDER BY Timestamp DESC
        LIMIT {limit:UInt32}`,
       params,
@@ -56,7 +64,7 @@ export class LogsEndpoint {
    * Live tail as server-sent events.
    *
    * A GET with filters in the query string because that is all `EventSource`
-   * can issue � and `EventSource` is the point: it reconnects on its own when
+   * can issue, and `EventSource` is the point: it reconnects on its own when
    * the connection drops, which a tail that is meant to stay open all day needs
    * and a finite search does not.
    */
@@ -65,11 +73,13 @@ export class LogsEndpoint {
     @Path('service') service?: string,
     @Path('minSeverity') minSeverity?: string,
     @Path('contains') contains?: string,
+    @Path('scope') scope?: string,
   ): Promise<SseResult> {
     const params = {
       service: service ?? '',
       minSeverity: Math.max(0, Math.floor(Number(minSeverity ?? 0)) || 0),
       contains: contains ?? '',
+      scope: scope ?? '',
       limit: 500,
     };
 
@@ -80,6 +90,7 @@ export class LogsEndpoint {
                    AND ({service:String} = '' OR ServiceName = {service:String})
                    AND SeverityNumber >= {minSeverity:Int32}
                    AND ({contains:String} = '' OR positionCaseInsensitive(Body, {contains:String}) > 0)
+                   AND ({scope:String} = '' OR ScopeName = {scope:String})
                  ORDER BY Timestamp ASC
                  LIMIT {limit:UInt32}`;
 

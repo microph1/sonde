@@ -63,6 +63,8 @@ export interface LogFilters {
   minSeverity?: number;
   contains?: string;
   traceId?: string;
+  /** Instrumentation scope, exactly — a Rust service's module path. */
+  scope?: string;
 }
 
 export interface VolumePoint {
