@@ -7,6 +7,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { AsyncPipe, DatePipe } from '@angular/common';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { PageHeader } from '../../shared/page-header';
 import { BehaviorSubject, startWith } from 'rxjs';
 
 import { LogsStore } from '../../core/logs.store';
@@ -19,10 +20,13 @@ const SUMMARY_CHARS = 70;
 
 @Component({
   selector: 'wt-logs-view',
-  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule],
+  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule, PageHeader],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <h1>Logs</h1>
+    <wt-page-header
+      heading="Logs"
+      subtitle="Records with the fields their instrumentation attached. Expand a row for the whole set."
+    />
 
     <form [formGroup]="filters" (ngSubmit)="run()" class="filters fx-flex fx-flex-wrap fx-items-end fx-gap-3 fx-mb-4">
       <mat-form-field subscriptSizing="dynamic">
@@ -113,7 +117,7 @@ const SUMMARY_CHARS = 70;
             <td class="when">{{ record.Timestamp | date: 'HH:mm:ss.SSS' }}</td>
             <td class="mono">{{ record.ServiceName }}</td>
             <td>
-              <span class="severity" [class]="severityClass(record.SeverityNumber)">
+              <span class="chip" [class]="'chip ' + severityClass(record.SeverityNumber)">
                 {{ record.SeverityText || '—' }}
               </span>
             </td>
@@ -163,7 +167,14 @@ const SUMMARY_CHARS = 70;
           }
         } @empty {
           @if (!(searching$ | async)) {
-            <tr><td colspan="7" class="hint">No records matched.</td></tr>
+            <tr>
+              <td colspan="7">
+                <div class="nothing-here">
+                  <mat-icon>subject</mat-icon>
+                  <span>Nothing matched. Widen the severity, clear a filter, or tail what is arriving.</span>
+                </div>
+              </td>
+            </tr>
           }
         }
       </tbody>
@@ -220,21 +231,6 @@ const SUMMARY_CHARS = 70;
 
     .sev-debug {
       color: var(--text-dim);
-    }
-
-    /* Severity is the first thing scanned for in a long list, so it is a filled
-       chip rather than coloured text: an ERROR should be findable without
-       reading anything. */
-    .severity {
-      display: inline-block;
-      min-width: 4.5rem;
-      padding: 0.05rem 0.4rem;
-      border-radius: 999px;
-      background: color-mix(in srgb, currentColor 16%, transparent);
-      font-size: var(--fx-typography--2);
-      font-weight: 600;
-      text-align: center;
-      letter-spacing: 0.02em;
     }
 
     .expander {

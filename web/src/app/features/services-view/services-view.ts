@@ -8,6 +8,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { combineLatest, filter, map, startWith, withLatestFrom } from 'rxjs';
 
 import { DEFAULT_RANGE, RANGES, Range, ServicesStore } from '../../core/services.store';
+import { PageHeader } from '../../shared/page-header';
 import { VolumeChart } from '../../shared/volume-chart';
 
 @Component({
@@ -20,14 +21,15 @@ import { VolumeChart } from '../../shared/volume-chart';
     VolumeChart,
     MatButtonToggleModule,
     MatFormFieldModule,
-    MatSelectModule,
-  ],
+    MatSelectModule, PageHeader],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (range$ | async; as range) {
-      <header class="fx-flex fx-items-center fx-gap-4 fx-mb-4">
-        <h1>Services</h1>
-        <mat-form-field class="grouping fx-ml-a" subscriptSizing="dynamic">
+      <wt-page-header
+        heading="Services"
+        subtitle="What is reporting, how much of it, and how much of that went wrong."
+      >
+        <mat-form-field class="grouping" subscriptSizing="dynamic">
           <mat-label>Group by</mat-label>
           <mat-select
             [value]="(grouping$ | async) ?? 'service'"
@@ -46,7 +48,7 @@ import { VolumeChart } from '../../shared/volume-chart';
             </mat-button-toggle>
           }
         </mat-button-toggle-group>
-      </header>
+      </wt-page-header>
 
       <div class="tiles fx-gap-2 fx-mb-5">
         @for (tile of tiles$ | async; track tile.label) {

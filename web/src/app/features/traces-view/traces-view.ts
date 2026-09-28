@@ -7,6 +7,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { AsyncPipe, DatePipe } from '@angular/common';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { PageHeader } from '../../shared/page-header';
 import { startWith } from 'rxjs';
 
 import { TracesStore } from '../../core/traces.store';
@@ -15,10 +16,13 @@ import { DurationPipe } from '../../shared/duration-pipe';
 
 @Component({
   selector: 'wt-traces-view',
-  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, DurationPipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule],
+  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, DurationPipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule, PageHeader],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <h1>Traces</h1>
+    <wt-page-header
+      heading="Traces"
+      subtitle="Spans as they were recorded. Search a window, or tail what is arriving now."
+    />
 
     <form [formGroup]="filters" (ngSubmit)="run()" class="filters fx-flex fx-flex-wrap fx-items-end fx-gap-3 fx-mb-4">
       <mat-form-field subscriptSizing="dynamic">
@@ -98,14 +102,21 @@ import { DurationPipe } from '../../shared/duration-pipe';
             <td>{{ span.SpanName }}</td>
             <td>{{ span.SpanKind }}</td>
             <td class="num">{{ span.Duration | duration }}</td>
-            <td [class]="'status-' + span.StatusCode">{{ span.StatusCode }}</td>
+            <td><span class="chip" [class]="'chip status-' + span.StatusCode">{{ span.StatusCode }}</span></td>
             <td>
               <a class="mono" [routerLink]="['/traces', span.TraceId]">{{ span.TraceId.slice(0, 12) }}…</a>
             </td>
           </tr>
         } @empty {
           @if (!(searching$ | async)) {
-            <tr><td colspan="7" class="hint">No spans matched.</td></tr>
+            <tr>
+              <td colspan="7">
+                <div class="nothing-here">
+                  <mat-icon>account_tree</mat-icon>
+                  <span>No spans matched. Widen the window, drop the duration filter, or tail what is arriving.</span>
+                </div>
+              </td>
+            </tr>
           }
         }
       </tbody>

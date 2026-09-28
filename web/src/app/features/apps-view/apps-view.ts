@@ -16,6 +16,7 @@ import { BehaviorSubject, combineLatest, filter, map, startWith } from 'rxjs';
 
 import { ApiKey, App, AppsStore, KeyKind } from '../../core/apps.store';
 import { CopyButton } from '../../shared/copy-button';
+import { PageHeader } from '../../shared/page-header';
 import { IssuedKeyDialog } from './issued-key.dialog';
 
 interface AppCard extends App {
@@ -40,19 +41,13 @@ interface AppCard extends App {
     MatListModule,
     MatRadioModule,
     MatTooltipModule,
-    MatDialogModule,
-  ],
+    MatDialogModule, PageHeader],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <header class="fx-mb-5">
-      <h1>Apps &amp; keys</h1>
-      <p class="dim intro">
-        An app is what a key identifies. The receiver stamps every batch with the app its
-        key belongs to, which is why that grouping can be trusted where
-        <code>service.name</code> cannot — anything can claim to be any service, but only
-        a key holder can claim to be an app.
-      </p>
-    </header>
+    <wt-page-header
+      heading="Apps &amp; keys"
+      subtitle="An app is what a key identifies, and the receiver stamps every batch with it — which is why that grouping can be trusted where service.name cannot."
+    />
 
     <div class="layout">
       <section class="apps">

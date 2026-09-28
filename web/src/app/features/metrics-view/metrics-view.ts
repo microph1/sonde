@@ -8,6 +8,7 @@ import { map } from 'rxjs';
 
 import { MetricOverview, MetricSummary, MetricsStore } from '../../core/metrics.store';
 import { RANGES, Range } from '../../core/services.store';
+import { PageHeader } from '../../shared/page-header';
 import { Sparkline } from '../../shared/sparkline';
 import { VolumeChart } from '../../shared/volume-chart';
 
@@ -20,12 +21,13 @@ import { VolumeChart } from '../../shared/volume-chart';
     MatButtonToggleModule,
     MatSlideToggleModule,
     MatRippleModule,
-    MatTooltipModule,
-  ],
+    MatTooltipModule, PageHeader],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <header class="fx-flex fx-items-center fx-flex-wrap fx-gap-4 fx-mb-4">
-      <h1>Metrics</h1>
+    <wt-page-header
+      heading="Metrics"
+      subtitle="Every instrument reporting, with the shape of each. Pick one for the full breakdown."
+    >
 
       @if (selected$ | async; as metric) {
         @if (metric.kind === 'sum') {
@@ -40,7 +42,6 @@ import { VolumeChart } from '../../shared/volume-chart';
       }
 
       <mat-button-toggle-group
-        class="fx-ml-a"
         aria-label="Time range"
         hideSingleSelectionIndicator
         [value]="rangeLabel$ | async"
@@ -51,7 +52,7 @@ import { VolumeChart } from '../../shared/volume-chart';
           </mat-button-toggle>
         }
       </mat-button-toggle-group>
-    </header>
+    </wt-page-header>
 
     @if (selected$ | async; as metric) {
       <section class="detail fx-mb-6">
