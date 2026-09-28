@@ -8,8 +8,10 @@ import { MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
+import { MatListModule } from '@angular/material/list';
 import { MatRadioModule } from '@angular/material/radio';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { BehaviorSubject, combineLatest, filter, map, startWith } from 'rxjs';
 
 import { ApiKey, App, AppsStore, KeyKind } from '../../core/apps.store';
@@ -28,190 +30,238 @@ interface AppCard extends App {
     ReactiveFormsModule,
     AsyncPipe,
     DatePipe,
+    RouterLink,
     CopyButton,
     MatCardModule,
     MatButtonModule,
     MatIconModule,
     MatFormFieldModule,
     MatInputModule,
+    MatListModule,
     MatRadioModule,
     MatTooltipModule,
     MatDialogModule,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <header class="fx-flex fx-flex-wrap fx-items-start fx-gap-4 fx-mb-5">
-      <div class="intro">
-        <h1>Apps &amp; keys</h1>
-        <p class="dim">
-          An app is what a key identifies. The receiver stamps every batch with the app its
-          key belongs to, which is why that grouping can be trusted where
-          <code>service.name</code> cannot — anything can claim to be any service, but only
-          a key holder can claim to be an app.
-        </p>
-      </div>
-
-      <form [formGroup]="appForm" (ngSubmit)="createApp()" class="new-app fx-flex fx-gap-2 fx-ml-a">
-        <mat-form-field subscriptSizing="dynamic">
-          <mat-label>New app</mat-label>
-          <input matInput formControlName="name" placeholder="microgamma" />
-        </mat-form-field>
-
-        <button mat-flat-button type="submit" [disabled]="appForm.invalid">
-          <mat-icon>add</mat-icon>
-          Create app
-        </button>
-      </form>
+    <header class="fx-mb-5">
+      <h1>Apps &amp; keys</h1>
+      <p class="dim intro">
+        An app is what a key identifies. The receiver stamps every batch with the app its
+        key belongs to, which is why that grouping can be trusted where
+        <code>service.name</code> cannot — anything can claim to be any service, but only
+        a key holder can claim to be an app.
+      </p>
     </header>
 
-    <section class="cards">
-      @for (app of cards$ | async; track app.id) {
-        <mat-card appearance="outlined">
-          <mat-card-header>
-            <mat-card-title class="mono">{{ app.name }}</mat-card-title>
-            <mat-card-subtitle>
-              {{ app.live }} live {{ app.live === 1 ? 'key' : 'keys' }}<!--
-              -->{{ app.revoked ? ' · ' + app.revoked + ' revoked' : '' }} · created
-              {{ app.createdAt | date: 'MMM d, y' }}
-            </mat-card-subtitle>
+    <div class="layout">
+      <section class="apps">
+        <form [formGroup]="appForm" (ngSubmit)="createApp()" class="new-app fx-flex fx-gap-2 fx-mb-3">
+          <mat-form-field subscriptSizing="dynamic">
+            <mat-label>New app</mat-label>
+            <input matInput formControlName="name" placeholder="microgamma" />
+          </mat-form-field>
 
-            <span class="fx-ml-a">
-              @if ((confirming$ | async) === app.id) {
-                <span class="fx-flex fx-items-center fx-gap-2">
-                  <span class="dim">Delete {{ app.name }}?</span>
-                  <button mat-flat-button class="danger" (click)="deleteApp(app)">Delete</button>
-                  <button mat-button (click)="cancel()">Cancel</button>
-                </span>
+          <button mat-flat-button type="submit" [disabled]="appForm.invalid" aria-label="Create app">
+            <mat-icon>add</mat-icon>
+          </button>
+        </form>
+
+        <mat-nav-list>
+          @for (app of cards$ | async; track app.id) {
+            <a
+              mat-list-item
+              [routerLink]="['/apps', app.id]"
+              [activated]="app.id === (selectedId$ | async)"
+            >
+              <span matListItemTitle class="mono">{{ app.name }}</span>
+              <span matListItemLine class="dim">
+                {{ app.live }} live<!--
+                -->{{ app.revoked ? ' · ' + app.revoked + ' revoked' : '' }}
+              </span>
+            </a>
+          } @empty {
+            <p class="dim fx-p-3">
+              No apps yet. Telemetry can still arrive while ingest auth is off; name one to
+              start requiring a key.
+            </p>
+          }
+        </mat-nav-list>
+      </section>
+
+      <section class="detail">
+        @if (selected$ | async; as app) {
+          <mat-card appearance="outlined">
+            <mat-card-header>
+              <mat-card-title class="mono">{{ app.name }}</mat-card-title>
+              <mat-card-subtitle>
+                {{ app.live }} live {{ app.live === 1 ? 'key' : 'keys' }}<!--
+                -->{{ app.revoked ? ' · ' + app.revoked + ' revoked' : '' }} · created
+                {{ app.createdAt | date: 'MMM d, y' }}
+              </mat-card-subtitle>
+
+              <span class="fx-ml-a">
+                @if ((confirming$ | async) === app.id) {
+                  <span class="fx-flex fx-items-center fx-gap-2">
+                    <span class="dim">Delete {{ app.name }}?</span>
+                    <button mat-flat-button class="danger" (click)="deleteApp(app)">Delete</button>
+                    <button mat-button (click)="cancel()">Cancel</button>
+                  </span>
+                } @else {
+                  <button
+                    mat-icon-button
+                    matTooltip="Delete this app and its keys"
+                    aria-label="Delete this app"
+                    (click)="ask(app.id)"
+                  >
+                    <mat-icon>delete</mat-icon>
+                  </button>
+                }
+              </span>
+            </mat-card-header>
+
+            <ul class="keys">
+              @for (key of app.keys; track key.id) {
+                <li class="key" [class.revoked]="key.revoked">
+                  <code class="hint">{{ key.hint }}</code>
+
+                  <span class="badge" [class.public]="key.kind === 'public'">{{ key.kind }}</span>
+
+                  <span class="what">
+                    {{ key.name }}
+                    @if (key.origins.length) {
+                      <span class="origins dim mono">{{ key.origins.join(' · ') }}</span>
+                    } @else if (key.kind === 'public') {
+                      <span class="origins warn">any origin</span>
+                    }
+                  </span>
+
+                  <time class="dim" [attr.datetime]="key.createdAt">
+                    {{ key.createdAt | date: 'MMM d' }}
+                  </time>
+
+                  <span class="actions fx-flex fx-items-center">
+                    <wt-copy
+                      [value]="key.hint"
+                      label="Copy the key prefix"
+                      title="Copy the prefix. The key itself was shown once, at issue — only its hash is stored."
+                    />
+
+                    @if (key.revoked) {
+                      <span class="dim revoked-label">revoked</span>
+                    } @else if ((confirming$ | async) === key.id) {
+                      <button mat-flat-button class="danger" (click)="revoke(key.id)">Revoke</button>
+                      <button mat-button (click)="cancel()">Cancel</button>
+                    } @else {
+                      <button
+                        mat-icon-button
+                        matTooltip="Revoke this key"
+                        aria-label="Revoke this key"
+                        (click)="ask(key.id)"
+                      >
+                        <mat-icon>block</mat-icon>
+                      </button>
+                    }
+                  </span>
+                </li>
+              } @empty {
+                <li class="none dim">
+                  No keys yet — this app cannot send anything until one is issued.
+                </li>
+              }
+            </ul>
+
+            <mat-card-actions>
+              @if ((issuing$ | async) === true) {
+                <form [formGroup]="keyForm" (ngSubmit)="issueKey()" class="issue">
+                  <mat-form-field subscriptSizing="dynamic">
+                    <mat-label>Name</mat-label>
+                    <input matInput formControlName="name" placeholder="relay" />
+                  </mat-form-field>
+
+                  <mat-radio-group formControlName="kind" aria-label="Kind" class="kinds">
+                    <mat-radio-button value="secret">secret <small class="dim">backends</small></mat-radio-button>
+                    <mat-radio-button value="public">public <small class="dim">browsers</small></mat-radio-button>
+                  </mat-radio-group>
+
+                  @if ((kind$ | async) === 'public') {
+                    <mat-form-field class="origins-field" subscriptSizing="dynamic">
+                      <mat-label>Allowed origins</mat-label>
+                      <input matInput formControlName="origins" placeholder="http://app.localhost, https://app.example" />
+                      <mat-hint>
+                        A public key ships to browsers, so anyone who opens devtools can read it.
+                        Comma separated. Left empty, the key is accepted from anywhere.
+                      </mat-hint>
+                    </mat-form-field>
+                  }
+
+                  <span class="fx-flex fx-gap-2 fx-items-center">
+                    <button mat-flat-button type="submit" [disabled]="keyForm.invalid">Issue key</button>
+                    <button mat-button type="button" (click)="cancelIssue()">Cancel</button>
+                  </span>
+                </form>
               } @else {
-                <button
-                  mat-icon-button
-                  matTooltip="Delete this app and its keys"
-                  aria-label="Delete this app"
-                  (click)="ask(app.id)"
-                >
-                  <mat-icon>delete</mat-icon>
+                <button mat-button (click)="startIssue(app)">
+                  <mat-icon>add</mat-icon>
+                  Issue a key
                 </button>
               }
-            </span>
-          </mat-card-header>
-
-          <ul class="keys">
-            @for (key of app.keys; track key.id) {
-              <li class="key" [class.revoked]="key.revoked">
-                <code class="hint">{{ key.hint }}</code>
-
-                <span class="badge" [class.public]="key.kind === 'public'">{{ key.kind }}</span>
-
-                <span class="what">
-                  {{ key.name }}
-                  @if (key.origins.length) {
-                    <span class="origins dim mono">{{ key.origins.join(' · ') }}</span>
-                  } @else if (key.kind === 'public') {
-                    <span class="origins warn">any origin</span>
-                  }
-                </span>
-
-                <time class="dim" [attr.datetime]="key.createdAt">
-                  {{ key.createdAt | date: 'MMM d' }}
-                </time>
-
-                <span class="actions fx-flex fx-items-center">
-                  <wt-copy
-                    [value]="key.hint"
-                    label="Copy the key prefix"
-                    title="Copy the prefix. The key itself was shown once, at issue — only its hash is stored."
-                  />
-
-                  @if (key.revoked) {
-                    <span class="dim revoked-label">revoked</span>
-                  } @else if ((confirming$ | async) === key.id) {
-                    <button mat-flat-button class="danger" (click)="revoke(key.id)">Revoke</button>
-                    <button mat-button (click)="cancel()">Cancel</button>
-                  } @else {
-                    <button
-                      mat-icon-button
-                      matTooltip="Revoke this key"
-                      aria-label="Revoke this key"
-                      (click)="ask(key.id)"
-                    >
-                      <mat-icon>block</mat-icon>
-                    </button>
-                  }
-                </span>
-              </li>
-            } @empty {
-              <li class="none dim">No keys yet — this app cannot send anything until one is issued.</li>
-            }
-          </ul>
-
-          <mat-card-actions>
-            @if ((issuingFor$ | async) === app.id) {
-              <form [formGroup]="keyForm" (ngSubmit)="issueKey()" class="issue">
-                <mat-form-field subscriptSizing="dynamic">
-                  <mat-label>Name</mat-label>
-                  <input matInput formControlName="name" placeholder="relay" />
-                </mat-form-field>
-
-                <mat-radio-group formControlName="kind" aria-label="Kind" class="kinds">
-                  <mat-radio-button value="secret">secret <small class="dim">backends</small></mat-radio-button>
-                  <mat-radio-button value="public">public <small class="dim">browsers</small></mat-radio-button>
-                </mat-radio-group>
-
-                @if ((kind$ | async) === 'public') {
-                  <mat-form-field class="origins-field" subscriptSizing="dynamic">
-                    <mat-label>Allowed origins</mat-label>
-                    <input matInput formControlName="origins" placeholder="http://app.localhost, https://app.example" />
-                    <mat-hint>
-                      A public key ships to browsers, so anyone who opens devtools can read it.
-                      Comma separated. Left empty, the key is accepted from anywhere.
-                    </mat-hint>
-                  </mat-form-field>
-                }
-
-                <span class="fx-flex fx-gap-2 fx-items-center">
-                  <button mat-flat-button type="submit" [disabled]="keyForm.invalid">Issue key</button>
-                  <button mat-button type="button" (click)="cancelIssue()">Cancel</button>
-                </span>
-              </form>
-            } @else {
-              <button mat-button (click)="startIssue(app)">
-                <mat-icon>add</mat-icon>
-                Issue a key
-              </button>
-            }
-          </mat-card-actions>
-        </mat-card>
-      } @empty {
-        <mat-card appearance="outlined">
-          <mat-card-content class="dim">
-            No apps yet. Telemetry can still arrive while ingest auth is off; name an app above
-            to start requiring a key.
-          </mat-card-content>
-        </mat-card>
-      }
-    </section>
+            </mat-card-actions>
+          </mat-card>
+        } @else {
+          <mat-card appearance="outlined" class="nothing">
+            <mat-card-content class="dim">
+              @if ((hasApps$ | async) === true) {
+                Pick an app to see its keys. The one you are looking at is in the address bar,
+                so it can be linked to.
+              } @else {
+                Apps appear here once you name one.
+              }
+            </mat-card-content>
+          </mat-card>
+        }
+      </section>
+    </div>
   `,
   styles: `
     :host {
       display: block;
-      max-width: 72rem;
+      max-width: 78rem;
     }
 
     .intro {
-      max-width: 62ch;
-    }
-
-    .intro p {
+      max-width: 70ch;
       margin: 0;
     }
 
-    .new-app mat-form-field {
-      min-width: 14rem;
+    /* Master and detail side by side down to a narrow window, where the list
+       goes back on top of what it opens. */
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+      gap: var(--fx-m);
+      align-items: start;
     }
 
-    .cards {
-      display: grid;
-      gap: var(--fx-s);
+    @media (max-width: 60rem) {
+      .layout {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    .apps {
+      border: 1px solid var(--mat-sys-outline-variant);
+      border-radius: var(--mat-sys-corner-medium);
+      background: var(--surface);
+      padding: var(--fx-2xs);
+    }
+
+    .new-app {
+      align-items: center;
+    }
+
+    .new-app mat-form-field {
+      flex: 1;
     }
 
     mat-card-header {
@@ -219,8 +269,20 @@ interface AppCard extends App {
       gap: var(--fx-2xs);
     }
 
+    /* Material's list and card typography set the font shorthand, which resets
+       the family the global .mono rule was providing. An app name is an
+       identifier and reads as one. */
+    mat-card-title.mono,
+    .apps [matListItemTitle].mono {
+      font-family: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+    }
+
     mat-card-title.mono {
       font-size: var(--fx-typography-1);
+    }
+
+    .nothing mat-card-content {
+      padding-block: var(--fx-s);
     }
 
     /* One grid for the whole list so every row lines up, rather than each row
@@ -328,12 +390,17 @@ interface AppCard extends App {
 export class AppsView implements OnInit {
   private readonly store = inject(AppsStore);
   private readonly dialog = inject(MatDialog);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
 
+  /** The app in the address bar. Every other piece of state on this page hangs
+   * off it, which is the point of putting it there. */
+  protected readonly selectedId$ = this.route.paramMap.pipe(map((params) => params.get('appId')));
+
   /** Keys live inside the app they authenticate, because that is the only
-   * relationship either list has. Flat and side by side, reading one meant
-   * matching a name in a column against a name in another table. */
-  protected readonly cards$ = combineLatest([this.store.apps$, this.store.keys$]).pipe(
+   * relationship either list has. */
+  private readonly cards = combineLatest([this.store.apps$, this.store.keys$]).pipe(
     map(([apps, keys]) =>
       apps.map<AppCard>((app) => {
         const mine = keys.filter((key) => key.appId === app.id);
@@ -348,13 +415,20 @@ export class AppsView implements OnInit {
     ),
   );
 
-  /** Which card has its issue form open, and which row asked "are you sure?".
-   * View state with no meaning outside this page, so it stays here rather than
-   * in the store. */
-  private readonly issuingFor$$ = new BehaviorSubject<string | null>(null);
+  protected readonly cards$ = this.cards;
+  protected readonly hasApps$ = this.cards.pipe(map((cards) => cards.length > 0));
+
+  protected readonly selected$ = combineLatest([this.cards, this.selectedId$]).pipe(
+    map(([cards, id]) => cards.find((card) => card.id === id) ?? null),
+  );
+
+  /** Whether the issue form is open, and which row asked "are you sure?". View
+   * state with no meaning outside this page, so it stays here rather than in
+   * the store or the URL. */
+  private readonly issuing$$ = new BehaviorSubject(false);
   private readonly confirming$$ = new BehaviorSubject<string | null>(null);
 
-  protected readonly issuingFor$ = this.issuingFor$$.asObservable();
+  protected readonly issuing$ = this.issuing$$.asObservable();
   protected readonly confirming$ = this.confirming$$.asObservable();
 
   protected readonly appForm = new FormGroup({
@@ -383,6 +457,14 @@ export class AppsView implements OnInit {
           .afterClosed()
           .subscribe(() => this.store.dispatch('dismissIssued'));
       });
+
+    // Moving between apps closes anything that was open about the last one: an
+    // "are you sure?" that survived the move would be asking about a row that
+    // is no longer on screen.
+    this.selectedId$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      this.issuing$$.next(false);
+      this.confirming$$.next(null);
+    });
   }
 
   ngOnInit(): void {
@@ -391,17 +473,29 @@ export class AppsView implements OnInit {
   }
 
   protected createApp(): void {
-    this.store.dispatch('createApp', this.appForm.getRawValue().name);
+    const name = this.appForm.getRawValue().name;
+
     this.appForm.reset();
+    this.store.dispatch('createApp', name);
+
+    // Open what was just made. The store appends it, so the newest app is the
+    // last one, and landing on it is what anyone naming an app wants next.
+    this.store.apps$
+      .pipe(
+        map((apps) => apps.find((app) => app.name === name.trim())),
+        filter(Boolean),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe((app) => this.router.navigate(['/apps', app.id]));
   }
 
   protected startIssue(app: App): void {
     this.keyForm.reset({ appId: app.id, kind: 'secret', name: '', origins: '' });
-    this.issuingFor$$.next(app.id);
+    this.issuing$$.next(true);
   }
 
   protected cancelIssue(): void {
-    this.issuingFor$$.next(null);
+    this.issuing$$.next(false);
   }
 
   protected issueKey(): void {
@@ -417,7 +511,7 @@ export class AppsView implements OnInit {
         .filter((origin) => origin.length > 0),
     });
 
-    this.issuingFor$$.next(null);
+    this.issuing$$.next(false);
   }
 
   /** Deleting an app takes its keys with it and revoking cannot be undone, so
@@ -434,6 +528,8 @@ export class AppsView implements OnInit {
   protected deleteApp(app: App): void {
     this.store.dispatch('deleteApp', app.id);
     this.confirming$$.next(null);
+    // The URL pointed at something that no longer exists.
+    this.router.navigate(['/apps']);
   }
 
   protected revoke(keyId: string): void {

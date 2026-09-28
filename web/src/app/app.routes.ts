@@ -34,6 +34,15 @@ export const routes: Routes = [
     title: 'Apps & keys · sonde',
     loadComponent: () => import('./features/apps-view/apps-view').then((m) => m.AppsView),
   },
+  // The app being looked at belongs in the URL: it can then be linked to, sent
+  // to someone, opened in a second tab and found again in history. Same
+  // component, because the list is worth keeping on screen beside the keys.
+  {
+    path: 'apps/:appId',
+    canActivate: [authGuard],
+    title: 'Apps & keys · sonde',
+    loadComponent: () => import('./features/apps-view/apps-view').then((m) => m.AppsView),
+  },
   {
     path: 'logs',
     canActivate: [authGuard],
