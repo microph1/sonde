@@ -12,6 +12,112 @@ import { PageHeader } from '../../shared/page-header';
 import { Sparkline } from '../../shared/sparkline';
 import { VolumeChart } from '../../shared/volume-chart';
 
+interface Facet {
+  readonly label: string;
+  /** The metric this row came from, for anyone who needs to know exactly which
+   * number they are reading. */
+  readonly detail: string;
+  readonly value: string;
+}
+
+interface MetricCard {
+  readonly key: string;
+  readonly title: string;
+  /** The metric whose line is drawn and whose number leads. */
+  readonly lead: MetricOverview;
+  readonly facets: Facet[];
+  readonly ceiling: string;
+}
+
+/**
+ * Last segments that name a facet of a quantity rather than a quantity. Two
+ * metrics sharing a prefix are only one thing if both of these are.
+ */
+const FACETS = new Set([
+  'usage',
+  'used',
+  'peak',
+  'limit',
+  'max',
+  'size',
+  'total',
+  'free',
+  'available',
+  'available_size',
+  'physical_size',
+  'used_size',
+]);
+
+/** Which facet leads: what is happening now, before what it has been, before
+ * what it may become. A limit never leads - it is not a reading. */
+const LEAD_ORDER = [
+  'usage',
+  'used',
+  'size',
+  'used_size',
+  'physical_size',
+  'total',
+  'peak',
+  'free',
+  'available',
+  'available_size',
+  'max',
+  'limit',
+];
+
+/** Everything before the facet: `container.memory.usage` scopes to
+ * `container.memory`. */
+function scope(name: string): string {
+  const cut = name.lastIndexOf('.');
+
+  return cut > 0 ? name.slice(0, cut) : name;
+}
+
+function lastSegment(name: string): string {
+  const cut = name.indexOf('.');
+
+  return cut > 0 ? name.slice(0, cut) : name;
+}
+
+/**
+ * The quantity a metric measures, independent of whose it is.
+ *
+ * The scope without its first segment: `container.memory.usage` and
+ * `process.memory.usage` both reduce to `memory`, so the cgroup's number and
+ * the process's own land on one card. `http.server.request.body.size` reduces
+ * to `server.request.body`, which is deliberately *not* the same quantity as
+ * `server.response.body` — dropping more than the leading segment would merge
+ * a request with a response because both end in `body`.
+ *
+ * Unit and kind are in the key because two things measured differently are two
+ * things. A name with nowhere to drop from keys on itself and groups with
+ * nothing.
+ */
+function familyKey(metric: { name: string; unit: string; kind: string }): string {
+  const segments = scope(metric.name).split('.');
+  const quantity = segments.length > 1 ? segments.slice(1).join('.') : metric.name;
+
+  return `${quantity}|${metric.unit}|${metric.kind}`;
+}
+
+function leaf(name: string): string {
+  const cut = name.lastIndexOf('.');
+
+  return cut > 0 ? name.slice(cut + 1) : name;
+}
+
+function order(name: string): number {
+  const position = LEAD_ORDER.indexOf(leaf(name));
+
+  return position === -1 ? LEAD_ORDER.length : position;
+}
+
+function share(value: number, of: number): string {
+  const percent = Math.round((value / of) * 100);
+
+  return percent < 1 ? '<1%' : `${percent}%`;
+}
+
 @Component({
   selector: 'wt-metrics-view',
   imports: [
@@ -78,36 +184,52 @@ import { VolumeChart } from '../../shared/volume-chart';
     <h2 class="sr-only">Everything reporting</h2>
 
     <section class="cards">
-      @for (metric of overview$ | async; track metric.name + metric.kind) {
+      @for (card of cards$ | async; track card.key) {
         <button
           type="button"
           class="card"
           matRipple
-          [class.current]="metric.name === (selectedName$ | async)"
-          [attr.aria-pressed]="metric.name === (selectedName$ | async)"
-          (click)="pick(metric)"
+          [class.current]="card.lead.name === (selectedName$ | async)"
+          [attr.aria-pressed]="card.lead.name === (selectedName$ | async)"
+          (click)="pick(card.lead)"
         >
           <span class="top fx-flex fx-items-baseline fx-gap-2">
             <!-- The name is ellipsised to keep every card the same width, so
                  the full one has to stay reachable. -->
-            <span class="name mono" [title]="metric.name">{{ metric.name }}</span>
-            <span class="badge fx-ml-a">{{ reading(metric) }}</span>
+            <span class="name mono" [title]="card.title">{{ card.title }}</span>
+            <span class="badge fx-ml-a">{{ reading(card.lead) }}</span>
           </span>
 
           <span class="value">
-            {{ display(metric) }}<small class="suffix">{{ suffix(metric) }}</small>
+            {{ display(card.lead) }}<small class="suffix">{{ suffix(card.lead) }}</small>
+            <!-- A ceiling belongs beside the reading it bounds, not on a card
+                 of its own where 256 MB looks like a measurement. -->
+            @if (card.ceiling) {
+              <small class="ceiling">{{ card.ceiling }}</small>
+            }
           </span>
 
           <wt-sparkline
-            [points]="metric.points"
-            [empty]="absence(metric)"
-            [label]="metric.name + ', ' + reading(metric) + ' over the selected window'"
+            [points]="card.lead.points"
+            [empty]="absence(card.lead)"
+            [label]="card.title + ', ' + reading(card.lead) + ' over the selected window'"
           />
 
+          @if (card.facets.length) {
+            <span class="facets">
+              @for (facet of card.facets; track facet.label) {
+                <span class="facet">
+                  <span class="dim" [title]="facet.detail">{{ facet.label }}</span>
+                  <span class="num">{{ facet.value }}</span>
+                </span>
+              }
+            </span>
+          }
+
           <span class="foot dim">
-            {{ metric.series }} {{ metric.series === 1 ? 'series' : 'series' }}
-            @if (metric.unit) {
-              · {{ metric.unit }}
+            {{ card.lead.series }} {{ card.lead.series === 1 ? 'series' : 'series' }}
+            @if (card.lead.unit) {
+              · {{ card.lead.unit }}
             }
           </span>
         </button>
@@ -195,6 +317,29 @@ import { VolumeChart } from '../../shared/volume-chart';
       line-height: 1.1;
     }
 
+    .facets {
+      display: grid;
+      grid-template-columns: max-content max-content;
+      gap: 0 var(--fx-2xs);
+      font-size: var(--fx-typography--2);
+    }
+
+    .facet {
+      display: contents;
+    }
+
+    .facet .num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .ceiling {
+      margin-inline-start: 0.35em;
+      color: var(--text-dim);
+      font-size: var(--fx-typography--1);
+      font-weight: 400;
+    }
+
     .suffix {
       margin-inline-start: 0.15em;
       color: var(--text-dim);
@@ -212,6 +357,22 @@ export class MetricsView implements OnInit {
 
   protected readonly ranges = RANGES;
   protected readonly overview$ = this.store.overview$;
+
+  /**
+   * Metrics that describe one quantity, on one card.
+   *
+   * container.memory.usage, .peak and .limit are three names for one sentence -
+   * "using 12.9 MB, peaked at 13.8, out of 256" - and as three alphabetically
+   * sorted cards they read as three unrelated facts, with the 256 MB ceiling
+   * leading and looking like a measurement.
+   *
+   * They stay three metrics, though. Collapsing them into one with a
+   * state=current|peak|limit attribute is the standard-looking answer and it is
+   * wrong: usage and peak are measurements, limit is a property, and putting
+   * the constant back in the series is exactly what makes a chart unreadable.
+   * This is a grouping in the view, which is where the problem was.
+   */
+  protected readonly cards$ = this.store.overview$.pipe(map((metrics) => this.group(metrics)));
   protected readonly selected$ = this.store.selected$;
   protected readonly points$ = this.store.points$;
   protected readonly rate$ = this.store.rate$;
@@ -221,6 +382,87 @@ export class MetricsView implements OnInit {
 
   ngOnInit(): void {
     this.store.dispatch('loadCatalogue');
+  }
+
+  /**
+   * A family is a set of metrics sharing a dotted prefix whose last segments
+   * are all facets of the same quantity. The allow-list is what keeps this from
+   * grouping things that merely share a prefix: relay.peer.connects and
+   * relay.peer.disconnects are two quantities, not two views of one.
+   */
+  private group(metrics: MetricOverview[]): MetricCard[] {
+    const families = new Map<string, MetricOverview[]>();
+
+    // Keyed by the quantity rather than by the name's prefix, so the cgroup's
+    // memory and the process's own land on one card. Splitting them by scope is
+    // correct and pedantic: it makes you look in two places to answer one
+    // question. Unit and kind are in the key because two things measured
+    // differently are two things.
+    for (const metric of metrics) {
+      const family = familyKey(metric);
+
+      families.set(family, [...(families.get(family) ?? []), metric]);
+    }
+
+    const cards: MetricCard[] = [];
+
+    for (const members of families.values()) {
+      const facets = members.every((metric) => FACETS.has(leaf(metric.name)));
+
+      if (members.length < 2 || !facets) {
+        cards.push(...members.map((metric) => this.plain(metric)));
+        continue;
+      }
+
+      cards.push(this.family(members));
+    }
+
+    return cards.sort((a, b) => a.title.localeCompare(b.title));
+  }
+
+  private plain(metric: MetricOverview): MetricCard {
+    return {
+      key: `${metric.name}|${metric.kind}`,
+      title: metric.name,
+      lead: metric,
+      facets: [],
+      ceiling: '',
+    };
+  }
+
+  private family(members: MetricOverview[]): MetricCard {
+    const ranked = [...members].sort((a, b) => order(a.name) - order(b.name));
+    const lead = ranked[0];
+    const limit = members.find((metric) => leaf(metric.name) === 'limit');
+    const format = this.formatter(lead);
+
+    // The card is named for the scope that owns the ceiling, because that is
+    // the number anything else gets read against — on a container that is the
+    // cgroup, which is also what the OOM killer acts on.
+    const title = scope(limit?.name ?? lead.name);
+
+    // A ceiling is the one figure here that is not a reading, so it sits beside
+    // the reading it bounds rather than on a row, or a card, of its own.
+    const ceiling =
+      limit?.latest && lead.latest !== null
+        ? `of ${format(limit.latest)} (${share(lead.latest, limit.latest)})`
+        : '';
+
+    return {
+      key: title,
+      title,
+      lead,
+      ceiling,
+      facets: ranked.map((metric) => ({
+        // A member from another scope keeps it in the label: `process usage` is
+        // the relay's own resident pages, `usage` is the cgroup's, which
+        // includes page cache. Same card, different numbers, and the difference
+        // matters when one of them is climbing.
+        label: scope(metric.name) === title ? leaf(metric.name) : `${lastSegment(scope(metric.name))} ${leaf(metric.name)}`,
+        detail: metric.description ? `${metric.name} — ${metric.description}` : metric.name,
+        value: metric.latest === null ? '—' : this.formatter(metric)(metric.latest),
+      })),
+    };
   }
 
   protected pick(metric: MetricOverview): void {
