@@ -426,27 +426,40 @@ export class MetricsView implements OnInit {
       title: metric.name,
       lead: metric,
       facets: [],
-      ceiling: '',
+      ceiling: this.ceiling(metric, scope(metric.name)),
     };
+  }
+
+  /**
+   * "12.9 MB of 256.0 MB (5%)", when the resource says what the ceiling is.
+   *
+   * The cap comes from a resource attribute rather than a sibling metric: a
+   * limit is a property of the container, not a measurement of it. Nothing to
+   * show when the container is uncapped, which is the honest answer — the
+   * cgroup reads `max` and a fabricated ceiling would be worse than none.
+   */
+  private ceiling(metric: MetricOverview, family: string): string {
+    const limit = Number(metric.limits?.[`${family}.limit`]);
+
+    if (!Number.isFinite(limit) || limit <= 0 || metric.latest === null) {
+      return '';
+    }
+
+    return `of ${this.formatter(metric)(limit)} (${share(metric.latest, limit)})`;
   }
 
   private family(members: MetricOverview[]): MetricCard {
     const ranked = [...members].sort((a, b) => order(a.name) - order(b.name));
     const lead = ranked[0];
-    const limit = members.find((metric) => leaf(metric.name) === 'limit');
-    const format = this.formatter(lead);
 
-    // The card is named for the scope that owns the ceiling, because that is
-    // the number anything else gets read against — on a container that is the
-    // cgroup, which is also what the OOM killer acts on.
-    const title = scope(limit?.name ?? lead.name);
+    // Named for the scope whose ceiling the numbers are read against. On a
+    // container that is the cgroup's, which is also what the OOM killer acts
+    // on, so it is the one the others are compared to.
+    const title = scope(
+      members.find((metric) => metric.limits?.[`${scope(metric.name)}.limit`])?.name ?? lead.name,
+    );
 
-    // A ceiling is the one figure here that is not a reading, so it sits beside
-    // the reading it bounds rather than on a row, or a card, of its own.
-    const ceiling =
-      limit?.latest && lead.latest !== null
-        ? `of ${format(limit.latest)} (${share(lead.latest, limit.latest)})`
-        : '';
+    const ceiling = this.ceiling(lead, title);
 
     return {
       key: title,

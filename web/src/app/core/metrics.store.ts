@@ -16,6 +16,13 @@ export interface MetricSummary {
   readonly series: number;
   /** A counter only rises, so a rate is the only useful reading of it. */
   readonly monotonic: number;
+  /**
+   * Ceilings carried on the resource, keyed as they arrived:
+   * `container.memory.limit` is the cgroup cap the service started with.
+   * Absent when there is no cap. Values are strings — resource attributes are
+   * a string map — so they are parsed, not cast.
+   */
+  readonly limits: Record<string, string>;
 }
 
 export interface OverviewPoint {
@@ -57,6 +64,14 @@ export interface SeriesQuery {
   readonly metric: MetricSummary;
   readonly range: Range;
   readonly rate: boolean;
+}
+
+/** Everything before the last segment: `container.memory.usage` scopes to
+ * `container.memory`, which is where its ceiling is named. */
+function scopeOf(name: string): string {
+  const cut = name.lastIndexOf('.');
+
+  return cut > 0 ? name.slice(0, cut) : name;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -191,34 +206,20 @@ export class MetricsStore
   }
 
   /**
-   * The cap for a `.usage` gauge, when the instrument also reports a `.limit`.
+   * The cap this metric should be read against, from the resource that
+   * reported it.
    *
-   * Drawn as a reference line rather than a second series: a limit is a
-   * constant two orders of magnitude above the usage, and plotting it as a
-   * series would flatten the one anyone is trying to read. Returns null when
-   * there is no sibling — the relay reports no limit in dev, where the cgroup
-   * reads `max`.
+   * It used to be a sibling metric — `x.usage` looked for `x.limit` — and a
+   * limit is not a measurement: it is a property of the container, it cannot
+   * change without a restart, and as a series it was a flat line that had to be
+   * kept out of every axis it landed on. It rides on the resource now, so this
+   * is a lookup rather than a query, and it is absent when nothing is capped.
    */
   @Effect()
   loadReference(metric: MetricSummary): Observable<number | null> {
-    if (!metric.name.endsWith('.usage')) {
-      return of(null);
-    }
+    const ceiling = Number(metric.limits?.[`${scopeOf(metric.name)}.limit`]);
 
-    const name = metric.name.replace(/\.usage$/, '.limit');
-
-    if (!this._store$.getValue().catalogue.some((entry) => entry.name === name)) {
-      return of(null);
-    }
-
-    return from(
-      this.request<SeriesPoint[]>('POST', '/metrics/query', {
-        name,
-        kind: 'gauge',
-        bucketSeconds: 3600,
-        limit: 10,
-      }),
-    ).pipe(map((points) => points.at(-1)?.value ?? null));
+    return of(Number.isFinite(ceiling) && ceiling > 0 ? ceiling : null);
   }
 
   @Reduce()

@@ -15,6 +15,20 @@ export interface MetricSummary {
   readonly description: string;
   readonly series: number;
   readonly monotonic: number;
+  /**
+   * Resource attributes that name a ceiling, keyed as they arrived —
+   * `container.memory.limit` is the cgroup cap the service was started with.
+   *
+   * A limit belongs on the resource rather than in a series: it is a property
+   * of the container, it cannot change without a restart, and as a metric it
+   * was a flat line that had to be kept out of every axis it appeared on. It is
+   * absent when there is no cap, which is the honest answer — an uncapped
+   * cgroup reads `max`, and inventing a ceiling from that would be worse than
+   * having none.
+   *
+   * Values arrive as strings: ResourceAttributes is Map(String, String).
+   */
+  readonly limits: Record<string, string>;
 }
 
 export interface SeriesPoint {
@@ -58,6 +72,26 @@ interface OverviewRow extends OverviewPoint {
   /** 1 where the first bucket is a baseline rather than a reading. */
   readonly dropFirst: number;
 }
+
+/**
+ * Resource attributes that name a ceiling rather than a reading.
+ *
+ * Kept as the map they arrived in instead of being flattened to one number:
+ * which ceiling applies to which metric is the caller's question, and a
+ * `container.memory.*` card knows to look for `container.memory.limit`.
+ */
+// `anyIf` rather than `any`: the overview collapses every service reporting a
+// metric, and most of them have no cap at all. Picking an arbitrary resource
+// would report "no limit" whenever the arbitrary one happened to be uncapped.
+const CEILINGS = `
+  mapFilter(
+    (lk, lv) -> endsWith(lk, '.limit'),
+    anyIf(
+      ResourceAttributes,
+      length(mapFilter((rk, rv) -> endsWith(rk, '.limit'), ResourceAttributes)) > 0
+    )
+  )
+`;
 
 const TABLES: Record<MetricKind, string> = {
   gauge: 'otel_metrics_gauge',
@@ -195,20 +229,20 @@ export class MetricsEndpoint {
    */
   private async listMetrics(): Promise<MetricSummary[]> {
     return this.clickhouse.rows<MetricSummary>(
-      `SELECT name, kind, unit, description, series, monotonic FROM (
+      `SELECT name, kind, unit, description, series, monotonic, limits FROM (
          SELECT MetricName AS name, 'gauge' AS kind, any(MetricUnit) AS unit,
                 any(MetricDescription) AS description, uniq(Attributes) AS series,
-                0 AS monotonic
+                0 AS monotonic, ${CEILINGS} AS limits
          FROM ${TABLES.gauge} GROUP BY name
          UNION ALL
          SELECT MetricName AS name, 'sum' AS kind, any(MetricUnit) AS unit,
                 any(MetricDescription) AS description, uniq(Attributes) AS series,
-                toUInt8(any(IsMonotonic)) AS monotonic
+                toUInt8(any(IsMonotonic)) AS monotonic, ${CEILINGS} AS limits
          FROM ${TABLES.sum} GROUP BY name
          UNION ALL
          SELECT MetricName AS name, 'histogram' AS kind, any(MetricUnit) AS unit,
                 any(MetricDescription) AS description, uniq(Attributes) AS series,
-                0 AS monotonic
+                0 AS monotonic, ${CEILINGS} AS limits
          FROM ${TABLES.histogram} GROUP BY name
        )
        ORDER BY name`,
