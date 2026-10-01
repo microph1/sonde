@@ -4,9 +4,9 @@ import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatRippleModule } from '@angular/material/core';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { map } from 'rxjs';
+import { combineLatest, map, startWith } from 'rxjs';
 
-import { MetricOverview, MetricSummary, MetricsStore } from '../../core/metrics.store';
+import { Member, MetricOverview, MetricSummary, MetricsStore } from '../../core/metrics.store';
 import { RANGES, Range } from '../../core/services.store';
 import { PageHeader } from '../../shared/page-header';
 import { Sparkline } from '../../shared/sparkline';
@@ -23,8 +23,10 @@ interface Facet {
 interface MetricCard {
   readonly key: string;
   readonly title: string;
-  /** The metric whose line is drawn and whose number leads. */
+  /** The metric whose number leads and whose description the chart carries. */
   readonly lead: MetricOverview;
+  /** Every metric on this card, lead first — each one a line on the chart. */
+  readonly members: Member[];
   readonly facets: Facet[];
   readonly ceiling: string;
 }
@@ -73,8 +75,16 @@ function scope(name: string): string {
   return cut > 0 ? name.slice(0, cut) : name;
 }
 
-function lastSegment(name: string): string {
-  const cut = name.indexOf('.');
+/**
+ * The scope a name starts with: the part before the first separator.
+ *
+ * Both separators, because an older generation of these metrics is snake_case —
+ * `relay_peer_connects_total` is the same `relay` as `relay.peer.connects`, and
+ * grouping them apart would put a renamed metric in a section of its own until
+ * the old one ages out.
+ */
+function firstSegment(name: string): string {
+  const cut = name.search(/[._]/);
 
   return cut > 0 ? name.slice(0, cut) : name;
 }
@@ -161,21 +171,29 @@ function share(value: number, of: number): string {
     </wt-page-header>
 
     @if (selected$ | async; as metric) {
-      <section class="detail fx-mb-6">
+      <section class="detail fx-mb-6" [class.stale]="(loading$ | async) ?? false">
         <wt-volume-chart
           [points]="(points$ | async) ?? []"
           [empty]="absence(metric)"
           [reference]="(reference$ | async) ?? null"
           [format]="formatter(metric)"
-          [title]="metric.name"
+          [title]="(selectedTitle$ | async) ?? metric.name"
           [unit]="unitLabel(metric)"
         />
 
         <p class="dim fx-mt-2">
           {{ metric.description || 'No description supplied by the instrument.' }}
           <span class="mono">
-            · {{ metric.kind }}{{ metric.monotonic ? ', monotonic' : '' }} · {{ metric.series }}
-            {{ metric.series === 1 ? 'series' : 'series' }}
+            · {{ metric.kind }}{{ metric.monotonic ? ', monotonic' : '' }}
+            <!-- What is on the chart, which for a family is more than the
+                 metric the description belongs to. -->
+            @if ((drawn$ | async) ?? 0; as drawn) {
+              @if (drawn > 1) {
+                · {{ drawn }} metrics
+              } @else {
+                · {{ metric.series }} series
+              }
+            }
           </span>
         </p>
       </section>
@@ -183,15 +201,21 @@ function share(value: number, of: number): string {
 
     <h2 class="sr-only">Everything reporting</h2>
 
-    <section class="cards">
-      @for (card of cards$ | async; track card.key) {
+    @for (group of groups$ | async; track group.name) {
+      <h3 class="group fx-flex fx-items-baseline fx-gap-2">
+        {{ group.name }}
+        <span class="dim count">{{ group.cards.length }}</span>
+      </h3>
+
+      <section class="cards fx-mb-5">
+        @for (card of group.cards; track card.key) {
         <button
           type="button"
           class="card"
           matRipple
           [class.current]="card.lead.name === (selectedName$ | async)"
           [attr.aria-pressed]="card.lead.name === (selectedName$ | async)"
-          (click)="pick(card.lead)"
+          (click)="pick(card)"
         >
           <span class="top fx-flex fx-items-baseline fx-gap-2">
             <!-- The name is ellipsised to keep every card the same width, so
@@ -233,10 +257,11 @@ function share(value: number, of: number): string {
             }
           </span>
         </button>
-      } @empty {
-        <p class="dim">Nothing has reported a metric yet.</p>
-      }
-    </section>
+        }
+      </section>
+    } @empty {
+      <p class="dim">Nothing has reported a metric yet.</p>
+    }
   `,
   styles: `
     .control {
@@ -249,6 +274,23 @@ function share(value: number, of: number): string {
 
     .detail {
       max-width: 60rem;
+      transition: opacity 0.15s ease;
+    }
+
+    .detail.stale {
+      opacity: 0.55;
+    }
+
+    .group {
+      margin: 0 0 var(--fx-2xs);
+      font-size: var(--fx-typography-0);
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    .group .count {
+      font-size: var(--fx-typography--1);
+      font-weight: 400;
     }
 
     /* Intrinsic: the column count is decided by how much room there is, not by
@@ -310,10 +352,11 @@ function share(value: number, of: number): string {
       white-space: nowrap;
     }
 
+    /* Proportional figures: equal-width digits make a large standalone number
+       look loose. The facet rows below keep tabular, because those do stack. */
     .value {
       font-size: var(--fx-typography-3);
       font-weight: 600;
-      font-variant-numeric: tabular-nums;
       line-height: 1.1;
     }
 
@@ -373,6 +416,49 @@ export class MetricsView implements OnInit {
    * This is a grouping in the view, which is where the problem was.
    */
   protected readonly cards$ = this.store.overview$.pipe(map((metrics) => this.group(metrics)));
+
+  /**
+   * Cards under the scope their names already carry.
+   *
+   * Thirty-odd cards in one alphabetical grid is a list you search rather than
+   * read. The prefixes were chosen deliberately by whoever instrumented the
+   * service - container, process, host, relay - so the page can group on them
+   * instead of inventing a taxonomy.
+   */
+  protected readonly groups$ = this.cards$.pipe(
+    map((cards) => {
+      const groups = new Map<string, MetricCard[]>();
+
+      for (const card of cards) {
+        const name = firstSegment(card.title);
+
+        groups.set(name, [...(groups.get(name) ?? []), card]);
+      }
+
+      return [...groups.entries()]
+        .map(([name, members]) => ({ name, cards: members }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }),
+  );
+
+  /** The card's name, not one of its lines': a chart of three memory readings
+   * is titled container.memory, not container.memory.usage. */
+  protected readonly selectedTitle$ = combineLatest([this.cards$, this.store.selected$]).pipe(
+    map(([cards, selected]) =>
+      selected
+        ? (cards.find((card) => card.lead.name === selected.name)?.title ?? selected.name)
+        : '',
+    ),
+  );
+
+  /** Held rather than blanked while the next window loads: a chart that
+   * disappears and comes back jumps the page and loses the shape you were
+   * comparing against. */
+  protected readonly loading$ = this.store.getLoadingFor('loadSeries').pipe(startWith(false));
+
+  /** How many metrics the chart is drawing, which is not the same as how many
+   * attribute series the lead one has. */
+  protected readonly drawn$ = this.store.members$.pipe(map((members) => members.length));
   protected readonly selected$ = this.store.selected$;
   protected readonly points$ = this.store.points$;
   protected readonly rate$ = this.store.rate$;
@@ -425,6 +511,7 @@ export class MetricsView implements OnInit {
       key: `${metric.name}|${metric.kind}`,
       title: metric.name,
       lead: metric,
+      members: [{ key: `${metric.name}|${metric.kind}`, label: metric.name }],
       facets: [],
       ceiling: this.ceiling(metric, scope(metric.name)),
     };
@@ -461,25 +548,36 @@ export class MetricsView implements OnInit {
 
     const ceiling = this.ceiling(lead, title);
 
+    const label = (metric: MetricOverview) =>
+      scope(metric.name) === title
+        ? leaf(metric.name)
+        : `${firstSegment(scope(metric.name))} ${leaf(metric.name)}`;
+
     return {
       key: title,
       title,
       lead,
       ceiling,
+      // Lead first: the chart draws them in this order, and colour follows the
+      // entity, so usage keeps its hue whatever else is on the card.
+      members: ranked.map((metric) => ({
+        key: `${metric.name}|${metric.kind}`,
+        label: label(metric),
+      })),
       facets: ranked.map((metric) => ({
         // A member from another scope keeps it in the label: `process usage` is
         // the relay's own resident pages, `usage` is the cgroup's, which
         // includes page cache. Same card, different numbers, and the difference
         // matters when one of them is climbing.
-        label: scope(metric.name) === title ? leaf(metric.name) : `${lastSegment(scope(metric.name))} ${leaf(metric.name)}`,
+        label: label(metric),
         detail: metric.description ? `${metric.name} — ${metric.description}` : metric.name,
         value: metric.latest === null ? '—' : this.formatter(metric)(metric.latest),
       })),
     };
   }
 
-  protected pick(metric: MetricOverview): void {
-    this.store.dispatch('selectMetric', `${metric.name}|${metric.kind}`);
+  protected pick(card: MetricCard): void {
+    this.store.dispatch('selectMetric', card.members);
   }
 
   protected selectRange(range: Range): void {

@@ -39,10 +39,23 @@ export interface MetricOverview extends MetricSummary {
   readonly samples: number;
 }
 
+/** What the chart is showing: the metric whose shape leads, and every metric
+ * drawn beside it. For a lone metric the two are the same thing. */
+export interface Selected {
+  readonly lead: MetricOverview;
+  readonly members: MetricOverview[];
+  readonly labels: Record<string, string>;
+}
+
 export interface MetricsState {
   catalogue: MetricOverview[];
   overview: MetricOverview[];
   selected: MetricOverview | null;
+  /** The other metrics on the selected card — usage, peak and the process's own
+   * resident pages are three readings of one quantity, and a chart of one of
+   * them answers a third of the question. */
+  members: MetricOverview[];
+  labels: Record<string, string>;
   points: SeriesPoint[];
   range: Range;
   rate: boolean;
@@ -53,15 +66,22 @@ export interface MetricsState {
 export interface MetricsActions {
   loadCatalogue: () => Observable<MetricOverview[]>;
   loadOverview: (range: Range) => Observable<MetricOverview[]>;
-  selectMetric: (key: string) => Observable<MetricOverview>;
+  selectMetric: (members: Member[]) => Observable<Selected>;
   selectRange: (range: Range) => Observable<Range>;
   toggleRate: (rate: boolean) => Observable<boolean>;
   loadSeries: (query: SeriesQuery) => Observable<SeriesPoint[]>;
   loadReference: (metric: MetricSummary) => Observable<number | null>;
 }
 
+/** One line to draw, and what to call it. */
+export interface Member {
+  readonly key: string;
+  readonly label: string;
+}
+
 export interface SeriesQuery {
-  readonly metric: MetricSummary;
+  readonly members: MetricOverview[];
+  readonly labels: Record<string, string>;
   readonly range: Range;
   readonly rate: boolean;
 }
@@ -84,6 +104,8 @@ export class MetricsStore
   readonly catalogue$ = this.select((state) => state.catalogue);
   readonly overview$ = this.select((state) => state.overview);
   readonly selected$ = this.select((state) => state.selected);
+  readonly members$ = this.select((state) => state.members);
+  readonly labels$ = this.select((state) => state.labels);
   readonly points$ = this.select((state) => state.points);
   readonly range$ = this.select((state) => state.range);
   readonly rate$ = this.select((state) => state.rate);
@@ -94,6 +116,8 @@ export class MetricsStore
       catalogue: [],
       overview: [],
       selected: null,
+      members: [],
+      labels: {},
       points: [],
       // Metrics are sampled minutes apart, so the overview's one-hour default
       // would show a handful of points; a day is the smallest window with shape.
@@ -104,10 +128,10 @@ export class MetricsStore
 
     // The series follows all three, so the store owns the link rather than
     // asking the view to remember which of them require a reload.
-    combineLatest([this.selected$, this.range$, this.rate$]).subscribe(
-      ([metric, range, rate]) => {
+    combineLatest([this.selected$, this.members$, this.labels$, this.range$, this.rate$]).subscribe(
+      ([metric, members, labels, range, rate]) => {
         if (metric) {
-          this.dispatch('loadSeries', { metric, range, rate });
+          this.dispatch('loadSeries', { members: members.length ? members : [metric], labels, range, rate });
           this.dispatch('loadReference', metric);
         }
       },
@@ -147,23 +171,50 @@ export class MetricsStore
     return this.withOverview(state, overview);
   }
 
-  /** Takes a `name|kind` key rather than the object, so the view can dispatch
-   * straight from a select element without resolving anything itself. */
+  /**
+   * Takes `name|kind` keys rather than objects, so the view dispatches what it
+   * already has on screen without resolving anything itself.
+   *
+   * More than one because a card can be a family: usage, peak and the
+   * process's own resident pages are three readings of one quantity, and the
+   * chart should draw all of them. The first leads — it is the one the
+   * description, the unit and the rate toggle speak for.
+   */
   @Effect()
-  selectMetric(key: string): Observable<MetricOverview> {
-    const [name, kind] = key.split('|');
-    const found = this._store$
-      .getValue()
-      .catalogue.find((metric) => metric.name === name && metric.kind === kind);
+  selectMetric(members: Member[]): Observable<Selected> {
+    const catalogue = this.snapshot().catalogue;
+    const resolved = members
+      .map((member) => {
+        const [name, kind] = member.key.split('|');
 
-    return found ? of(found) : EMPTY;
+        return catalogue.find((metric) => metric.name === name && metric.kind === kind);
+      })
+      .filter((metric): metric is MetricOverview => Boolean(metric));
+
+    if (resolved.length === 0) {
+      return EMPTY;
+    }
+
+    const labels: Record<string, string> = {};
+
+    for (const member of members) {
+      labels[member.key] = member.label;
+    }
+
+    return of({ lead: resolved[0], members: resolved, labels });
   }
 
   @Reduce()
-  onSelectMetric(state: MetricsState, selected: MetricOverview): MetricsState {
+  onSelectMetric(state: MetricsState, selection: Selected): MetricsState {
     // A rate is meaningless for a gauge and the only sane reading of a
     // monotonic counter, so the toggle follows the instrument by default.
-    return { ...state, selected, rate: selected.kind === 'sum' && selected.monotonic === 1 };
+    return {
+      ...state,
+      selected: selection.lead,
+      members: selection.members,
+      labels: selection.labels,
+      rate: selection.lead.kind === 'sum' && selection.lead.monotonic === 1,
+    };
   }
 
   @Effect()
@@ -186,18 +237,43 @@ export class MetricsStore
     return { ...state, rate };
   }
 
+  /**
+   * One request per metric on the card, merged into one set of lines.
+   *
+   * They share an axis because they share a unit — that is what makes them one
+   * card and one chart. A member whose series already carries attributes keeps
+   * them, after its own name, so `peak · host=a` stays distinguishable from
+   * `usage · host=a`.
+   */
   @Effect()
   loadSeries(query: SeriesQuery): Observable<SeriesPoint[]> {
-    return from(
-      this.request<SeriesPoint[]>('POST', '/metrics/query', {
-        name: query.metric.name,
-        kind: query.metric.kind,
+    const alone = query.members.length === 1;
+
+    const lines = query.members.map(async (metric) => {
+      const points = await this.request<SeriesPoint[]>('POST', '/metrics/query', {
+        name: metric.name,
+        kind: metric.kind,
         bucketSeconds: query.range.bucketSeconds,
         from: new Date(Date.now() - query.range.windowMinutes * 60_000).toISOString(),
-        rate: query.rate,
+        // A rate is a counter's reading; asking a gauge for one would be asking
+        // how fast a temperature is a temperature.
+        rate: query.rate && metric.kind === 'sum',
         limit: 10_000,
-      }),
-    );
+      });
+
+      if (alone) {
+        return points;
+      }
+
+      const label = query.labels[`${metric.name}|${metric.kind}`] ?? metric.name;
+
+      return points.map((point) => ({
+        ...point,
+        series: point.series ? `${label} · ${point.series}` : label,
+      }));
+    });
+
+    return from(Promise.all(lines).then((all) => all.flat()));
   }
 
   @Reduce()
