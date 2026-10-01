@@ -1,32 +1,49 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { AsyncPipe, DatePipe } from '@angular/common';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { PageHeader } from '../../shared/page-header';
 import { BehaviorSubject, startWith } from 'rxjs';
 
 import { LogsStore } from '../../core/logs.store';
+import { DEFAULT_RANGE, RANGES, Range } from '../../core/services.store';
 import { LogFilters, LogRecord } from '../../core/telemetry.model';
 
 /** How much of a record's fields fits on one line before it stops being a
  * summary and starts being the thing you expand the row for. */
+/* eslint-disable no-control-regex -- matching control characters is the point. */
+const ANSI = /\u001B\[[0-9;]*[A-Za-z]/g;
+
 const SUMMARY_FIELDS = 3;
 const SUMMARY_CHARS = 70;
 
 @Component({
   selector: 'wt-logs-view',
-  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule, PageHeader],
+  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule, PageHeader, MatButtonToggleModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <wt-page-header
       heading="Logs"
       subtitle="Records with the fields their instrumentation attached. Expand a row for the whole set."
-    />
+    >
+      <mat-button-toggle-group
+        aria-label="Time range"
+        hideSingleSelectionIndicator
+        [value]="(range$ | async)?.label"
+      >
+        @for (option of ranges; track option.label) {
+          <mat-button-toggle [value]="option.label" (click)="selectRange(option)">
+            {{ option.label }}
+          </mat-button-toggle>
+        }
+      </mat-button-toggle-group>
+    </wt-page-header>
 
     <form [formGroup]="filters" (ngSubmit)="run()" class="filters fx-flex fx-flex-wrap fx-items-end fx-gap-3 fx-mb-4">
       <mat-form-field subscriptSizing="dynamic">
@@ -129,7 +146,7 @@ const SUMMARY_CHARS = 70;
               }
             </td>
             <td class="body">
-              {{ record.Body }}
+              {{ body(record) }}
               <!-- A terse message with its fields beside it. The tracing crate
                    writes info!(agent, protocol, "identify"), so the body alone is
                    a column of the same word and the record is in the fields. -->
@@ -317,6 +334,7 @@ const SUMMARY_CHARS = 70;
 export class LogsView implements OnInit {
   private readonly store = inject(LogsStore);
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
 
   protected readonly filters = new FormGroup({
     service: new FormControl(this.route.snapshot.queryParamMap.get('service') ?? ''),
@@ -331,6 +349,18 @@ export class LogsView implements OnInit {
   private readonly open$$ = new BehaviorSubject<ReadonlySet<number>>(new Set());
 
   protected readonly expanded$ = this.open$$.asObservable();
+  protected readonly ranges = RANGES;
+
+  /** The window to search. In the URL because a link to "what happened" is
+   * worthless without the when, and in a subject because the search reads it
+   * at dispatch time rather than subscribing to it. */
+  private readonly chosen$$ = new BehaviorSubject<Range>(
+    RANGES.find((option) => option.label === this.route.snapshot.queryParamMap.get('range')) ??
+      DEFAULT_RANGE,
+  );
+
+  protected readonly range$ = this.chosen$$.asObservable();
+
   protected readonly rows$ = this.store.rows$;
   protected readonly live$ = this.store.live$;
   protected readonly searching$ = this.store.getLoadingFor('search').pipe(startWith(false));
@@ -343,6 +373,17 @@ export class LogsView implements OnInit {
       return;
     }
 
+    this.run();
+  }
+
+  protected selectRange(range: Range): void {
+    this.chosen$$.next(range);
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { range: range.label },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
     this.run();
   }
 
@@ -412,6 +453,18 @@ export class LogsView implements OnInit {
     this.run();
   }
 
+  /**
+   * The message, without the terminal dressing.
+   *
+   * A service that writes colour to a TTY and ships the same string to OTLP
+   * sends the escape codes along with it, and they render as mojibake in a
+   * table — a Deno log arrived here as "ESC[0mESC[38;5;12mWatcher". Stripped
+   * for display only: what was ingested is what is stored.
+   */
+  protected body(record: LogRecord): string {
+    return record.Body.replace(ANSI, '');
+  }
+
   /** OTel severity numbers: 1-4 trace, 5-8 debug, 9-12 info, 13-16 warn, 17+ error. */
   protected severityClass(severity: number): string {
     if (severity >= 17) return 'sev-error';
@@ -422,6 +475,7 @@ export class LogsView implements OnInit {
 
   private currentFilters(): LogFilters {
     const { service, contains, scope, minSeverity, limit } = this.filters.getRawValue();
+    const range = this.chosen$$.value;
 
     return {
       service: service ?? '',
@@ -429,6 +483,7 @@ export class LogsView implements OnInit {
       scope: scope ?? '',
       minSeverity: Number(minSeverity ?? 0),
       limit: limit ?? 200,
+      from: new Date(Date.now() - range.windowMinutes * 60_000).toISOString(),
     };
   }
 }

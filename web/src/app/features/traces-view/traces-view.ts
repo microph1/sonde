@@ -1,28 +1,42 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { AsyncPipe, DatePipe } from '@angular/common';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { PageHeader } from '../../shared/page-header';
-import { startWith } from 'rxjs';
+import { BehaviorSubject, startWith } from 'rxjs';
 
 import { TracesStore } from '../../core/traces.store';
+import { DEFAULT_RANGE, RANGES, Range } from '../../core/services.store';
 import { TraceFilters } from '../../core/telemetry.model';
 import { DurationPipe } from '../../shared/duration-pipe';
 
 @Component({
   selector: 'wt-traces-view',
-  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, DurationPipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule, PageHeader],
+  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, DurationPipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule, PageHeader, MatButtonToggleModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <wt-page-header
       heading="Traces"
       subtitle="Spans as they were recorded. Search a window, or tail what is arriving now."
-    />
+    >
+      <mat-button-toggle-group
+        aria-label="Time range"
+        hideSingleSelectionIndicator
+        [value]="(range$ | async)?.label"
+      >
+        @for (option of ranges; track option.label) {
+          <mat-button-toggle [value]="option.label" (click)="selectRange(option)">
+            {{ option.label }}
+          </mat-button-toggle>
+        }
+      </mat-button-toggle-group>
+    </wt-page-header>
 
     <form [formGroup]="filters" (ngSubmit)="run()" class="filters fx-flex fx-flex-wrap fx-items-end fx-gap-3 fx-mb-4">
       <mat-form-field subscriptSizing="dynamic">
@@ -152,6 +166,7 @@ import { DurationPipe } from '../../shared/duration-pipe';
 export class TracesView implements OnInit {
   private readonly store = inject(TracesStore);
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
 
   protected readonly filters = new FormGroup({
     // Seeded from the URL so a link can carry a filtered view — the overview's
@@ -162,6 +177,18 @@ export class TracesView implements OnInit {
     minDurationMs: new FormControl<number | null>(null),
     limit: new FormControl(200),
   });
+
+  protected readonly ranges = RANGES;
+
+  /** The window to search. In the URL because a link to "what happened" is
+   * worthless without the when, and in a subject because the search reads it
+   * at dispatch time rather than subscribing to it. */
+  private readonly chosen$$ = new BehaviorSubject<Range>(
+    RANGES.find((option) => option.label === this.route.snapshot.queryParamMap.get('range')) ??
+      DEFAULT_RANGE,
+  );
+
+  protected readonly range$ = this.chosen$$.asObservable();
 
   protected readonly rows$ = this.store.rows$;
   protected readonly live$ = this.store.live$;
@@ -175,6 +202,17 @@ export class TracesView implements OnInit {
       return;
     }
 
+    this.run();
+  }
+
+  protected selectRange(range: Range): void {
+    this.chosen$$.next(range);
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { range: range.label },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
     this.run();
   }
 
@@ -192,6 +230,7 @@ export class TracesView implements OnInit {
 
   private currentFilters(): TraceFilters {
     const { service, name, status, minDurationMs, limit } = this.filters.getRawValue();
+    const range = this.chosen$$.value;
 
     return {
       service: service ?? '',
@@ -199,6 +238,11 @@ export class TracesView implements OnInit {
       status: status ?? '',
       minDurationMs: minDurationMs ?? 0,
       limit: limit ?? 200,
+      // Without this the API applied its own one-hour default and the page had
+      // no way to say otherwise: anything older than an hour simply was not
+      // there, and the empty state told you to widen a window you could not
+      // reach.
+      from: new Date(Date.now() - range.windowMinutes * 60_000).toISOString(),
     };
   }
 }
