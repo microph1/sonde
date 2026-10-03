@@ -14,6 +14,11 @@ exporters ──OTLP──▶ receiver ──▶ Redpanda ──▶ consumer ─
 | OTLP/gRPC | 4317 | protobuf, gzip in and out |
 | OTLP/HTTP | 4318 | `application/x-protobuf`, `application/json`, gzip requests |
 
+These are the ports this project used when it was called the-watchers, so an
+exporter configured against that stack reaches this one with no change at all —
+which is how a fleet of services can switch receivers without anybody noticing.
+Worth knowing when two of them are installed on the same machine.
+
 `POST /v1/traces`, `/v1/metrics`, `/v1/logs`; `GET /healthz`.
 
 Browsers can export directly once `SONDE_HTTP_CORS_ORIGINS` names their
@@ -109,7 +114,31 @@ between replicas.
 | `SONDE_CLICKHOUSE_PASSWORD` | | |
 | `SONDE_CLICKHOUSE_TTL_DAYS` | `30` | `0` keeps data forever |
 | `SONDE_CLICKHOUSE_CREATE_SCHEMA` | `true` | run the DDL on start |
+| `SONDE_INGEST_AUTH` | `off` | `required` rejects a batch with no valid app key |
+| `SONDE_KEY_REFRESH_SECONDS` | `30` | how long a revoked key keeps working |
 | `RUST_LOG` | `sonde=info,warn` | |
+
+## Ingest authentication
+
+`SONDE_INGEST_AUTH=required` makes every batch carry
+`Authorization: Bearer <key>`, where the key belongs to an app minted in the
+console. The receiver then stamps `sonde.app` on each resource, overwriting
+whatever the exporter claimed — which is what makes that attribute worth
+grouping by, where `service.name` is only ever a claim.
+
+The development stack defaults to `off` and production to `required`. That is
+a real difference between the two, and the most likely thing to break on the
+way from one to the other; running dev with `SONDE_INGEST_AUTH=required` and a
+dev key exercises the same path:
+
+```sh
+# in compose.yaml's environment, or the shell that starts it
+SONDE_INGEST_AUTH=required docker compose up -d receiver
+```
+
+Browsers are covered by the same CORS setting: the preflight mirrors the
+requested headers rather than listing them, so `Authorization` needs no
+separate allow-list. `SONDE_HTTP_CORS_ORIGINS` is the only knob.
 
 ## Authentication
 
