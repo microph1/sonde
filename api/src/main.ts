@@ -11,6 +11,7 @@ import { Oidc } from './auth/oidc';
 import { Sessions } from './auth/session';
 import { ClickHouseService } from './clickhouse/clickhouse.service';
 import { configFromEnv } from './config';
+import { GraphEndpoint } from './endpoints/graph.endpoint';
 import { LogsEndpoint } from './endpoints/logs.endpoint';
 import { AppsEndpoint } from './endpoints/apps.endpoint';
 import { MetricsEndpoint } from './endpoints/metrics.endpoint';
@@ -36,6 +37,7 @@ import { StreamingEventHandler } from './server/streaming.handler';
     TracesEndpoint,
     LogsEndpoint,
     ServicesEndpoint,
+    GraphEndpoint,
     { provide: LambdaDefaultHandler, useClass: StreamingEventHandler },
   ],
 })
@@ -57,6 +59,7 @@ export async function start(): Promise<void> {
     [
       injector(TracesEndpoint),
       injector(LogsEndpoint),
+      injector(GraphEndpoint),
       injector(ServicesEndpoint),
       injector(AppsEndpoint),
       injector(MetricsEndpoint),

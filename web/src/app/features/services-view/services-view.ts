@@ -91,6 +91,7 @@ import { VolumeChart } from '../../shared/volume-chart';
           <th scope="col">Service</th>
           <th scope="col">Spans</th>
           <th scope="col">Logs</th>
+          <th scope="col">Metrics</th>
           <th scope="col">Last seen</th>
           <th scope="col"><span class="sr-only">Actions</span></th>
         </tr>
@@ -101,14 +102,18 @@ import { VolumeChart } from '../../shared/volume-chart';
             <th scope="row" class="mono">{{ service.ServiceName }}</th>
             <td>{{ service.traces | number }}</td>
             <td>{{ service.logs | number }}</td>
+            <td>{{ service.metrics | number }}</td>
             <td>{{ service.lastSeen | date: 'medium' }}</td>
             <td class="fx-flex fx-gap-3">
               <a [routerLink]="['/traces']" [queryParams]="{ service: service.ServiceName }">traces</a>
               <a [routerLink]="['/logs']" [queryParams]="{ service: service.ServiceName }">logs</a>
+              @if (service.metrics) {
+                <a [routerLink]="['/metrics']">metrics</a>
+              }
             </td>
           </tr>
         } @empty {
-          <tr><td colspan="5" class="hint">Nothing has reported yet.</td></tr>
+          <tr><td colspan="6" class="hint">Nothing has reported yet.</td></tr>
         }
       </tbody>
     </table>

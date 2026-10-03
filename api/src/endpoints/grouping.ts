@@ -27,6 +27,19 @@ export const GROUPINGS = {
       "coalesce(nullIf(ResourceAttributes['k8s.cluster.name'], ''), nullIf(ResourceAttributes['cluster'], ''), '')",
   },
   host: { label: 'Host', expression: "ResourceAttributes['host.name']" },
+  instance: {
+    label: 'Instance',
+    expression: "ResourceAttributes['service.instance.id']",
+  },
+  role: {
+    label: 'Role',
+    // Two processes can share a service name on purpose - a renderer and the
+    // main process it talks to over IPC are one service and two roles - and
+    // this is what pulls them apart on the map. `service.role` first because it
+    // is the generic spelling; `mg.client.role` because it is the one in use.
+    expression:
+      "coalesce(nullIf(ResourceAttributes['service.role'], ''), nullIf(ResourceAttributes['mg.client.role'], ''), '')",
+  },
 } as const;
 
 export type Grouping = keyof typeof GROUPINGS;

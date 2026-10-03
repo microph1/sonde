@@ -29,6 +29,12 @@ export const routes: Routes = [
     loadComponent: () => import('./features/metrics-view/metrics-view').then((m) => m.MetricsView),
   },
   {
+    path: 'map',
+    canActivate: [authGuard],
+    title: 'Map · sonde',
+    loadComponent: () => import('./features/graph-view/graph-view').then((m) => m.GraphView),
+  },
+  {
     path: 'apps',
     canActivate: [authGuard],
     title: 'Apps & keys · sonde',

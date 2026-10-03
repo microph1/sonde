@@ -10,6 +10,7 @@ export interface ServiceSummary {
   readonly ServiceName: string;
   readonly traces: string;
   readonly logs: string;
+  readonly metrics: string;
   readonly lastSeen: string;
 }
 
@@ -30,16 +31,31 @@ export class ServicesEndpoint {
   @Lambda({ method: 'GET', path: '/services' })
   public async list(): Promise<ServiceSummary[]> {
     return this.clickhouse.rows<ServiceSummary>(
+      // All three signals, because a service that only exports metrics is not a
+      // dead service. Counting traces and logs alone had musicbox-streamer
+      // reading as last seen hours ago while it was exporting every fifteen
+      // seconds, and "services reporting" undercounting to match — the page
+      // said nothing was there and was believed twice.
       `SELECT ServiceName,
               sum(traces) AS traces,
               sum(logs) AS logs,
+              sum(metrics) AS metrics,
               max(lastSeen) AS lastSeen
        FROM (
-         SELECT ServiceName, count() AS traces, 0 AS logs, max(Timestamp) AS lastSeen
+         SELECT ServiceName, count() AS traces, 0 AS logs, 0 AS metrics, max(Timestamp) AS lastSeen
          FROM otel_traces GROUP BY ServiceName
          UNION ALL
-         SELECT ServiceName, 0 AS traces, count() AS logs, max(Timestamp) AS lastSeen
+         SELECT ServiceName, 0 AS traces, count() AS logs, 0 AS metrics, max(Timestamp) AS lastSeen
          FROM otel_logs GROUP BY ServiceName
+         UNION ALL
+         SELECT ServiceName, 0 AS traces, 0 AS logs, count() AS metrics, max(Timestamp) AS lastSeen
+         FROM otel_metrics_gauge GROUP BY ServiceName
+         UNION ALL
+         SELECT ServiceName, 0 AS traces, 0 AS logs, count() AS metrics, max(Timestamp) AS lastSeen
+         FROM otel_metrics_sum GROUP BY ServiceName
+         UNION ALL
+         SELECT ServiceName, 0 AS traces, 0 AS logs, count() AS metrics, max(Timestamp) AS lastSeen
+         FROM otel_metrics_histogram GROUP BY ServiceName
        )
        GROUP BY ServiceName
        ORDER BY lastSeen DESC`,

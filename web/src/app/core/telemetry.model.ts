@@ -42,6 +42,9 @@ export interface ServiceSummary {
   readonly ServiceName: string;
   readonly traces: number;
   readonly logs: number;
+  /** Metric points, counted so a service that exports nothing else still
+   * registers as alive. */
+  readonly metrics: number;
   readonly lastSeen: string;
 }
 
