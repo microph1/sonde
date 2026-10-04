@@ -25,7 +25,7 @@ import { DurationPipe } from '../../shared/duration-pipe';
   template: `
     <wt-page-header
         heading="Traces"
-        subtitle="Spans as they were recorded. Search a window, or tail what is arriving now."
+        subtitle="One row per trace: where it entered, how far it spread, how long the whole thing took."
       >
         <mat-button-toggle-group
           aria-label="Time range"
@@ -94,7 +94,7 @@ import { DurationPipe } from '../../shared/duration-pipe';
         @if ((live$ | async) === true) {
           <span class="pill">live</span>
         }
-        {{ (rows$ | async)?.length ?? 0 }} spans{{ (searching$ | async) ? ' — streaming…' : '' }}
+        {{ (rows$ | async)?.length ?? 0 }} traces{{ (searching$ | async) ? ' — streaming…' : '' }}
       </p>
 
     <!-- A list of expansion panels rather than a table: a row that opens
@@ -103,45 +103,52 @@ import { DurationPipe } from '../../shared/duration-pipe';
            The strip above carries the column names the panel headers line
            up with. -->
     <div class="columns" aria-hidden="true">
-        <span>Time</span>
-        <span>Service</span>
-        <span>Span</span>
-        <span>Kind</span>
+        <span>Started</span>
+        <span>Entry service</span>
+        <span>Root span</span>
+        <span class="num">Spans</span>
         <span class="num">Duration</span>
         <span>Status</span>
       </div>
 
-    <mat-accordion class="spans" displayMode="flat">
-        @for (span of rows$ | async; track span.SpanId) {
+    <!-- multi: comparing two traces means having both open, and an accordion
+             that closes one to show another makes that impossible. -->
+        <mat-accordion class="spans" displayMode="flat" multi>
+        @for (trace of rows$ | async; track trace.TraceId) {
           <mat-expansion-panel
-              [expanded]="span.TraceId === initialTrace"
-            (opened)="open(span.TraceId)"
+            [expanded]="trace.TraceId === initialTrace"
+            (opened)="open(trace.TraceId)"
             hideToggle
           >
             <mat-expansion-panel-header>
               <mat-panel-title>
-                <span class="cell when">{{ span.Timestamp | date: 'HH:mm:ss.SSS' }}</span>
-                <span class="cell mono">{{ span.ServiceName }}</span>
-                <span class="cell name" [title]="span.SpanName">{{ span.SpanName }}</span>
-                <span class="cell dim">{{ span.SpanKind }}</span>
-                <span class="cell num">{{ span.Duration | duration }}</span>
+                <span class="cell when">{{ trace.StartedAt | date: 'HH:mm:ss.SSS' }}</span>
+                <span class="cell mono">{{ trace.RootService }}</span>
+                <span class="cell name" [title]="trace.RootName">
+                  {{ trace.RootName }}
+                  @if (trace.Services > 1) {
+                    <span class="dim">· {{ trace.Services }} services</span>
+                  }
+                </span>
+                <span class="cell num">{{ trace.Spans }}</span>
+                <span class="cell num">{{ trace.TotalDuration | duration }}</span>
                 <span class="cell">
-                  <span class="chip" [class]="'chip status-' + span.StatusCode">{{ span.StatusCode }}</span>
+                  <span class="chip" [class]="trace.Errors ? 'chip status-Error' : 'chip status-Ok'">
+                    {{ trace.Errors ? trace.Errors + ' error' + (trace.Errors === 1 ? '' : 's') : 'ok' }}
+                  </span>
                 </span>
               </mat-panel-title>
             </mat-expansion-panel-header>
 
-            <!-- Rendered only once open: every panel sharing one trace store
-                 means only the expanded one may exist. -->
             <ng-template matExpansionPanelContent>
-              <wt-trace-detail [traceId]="span.TraceId" />
+              <wt-trace-detail [traceId]="trace.TraceId" />
             </ng-template>
           </mat-expansion-panel>
         } @empty {
           @if (!(searching$ | async)) {
             <div class="nothing-here">
               <mat-icon>account_tree</mat-icon>
-              <span>No spans matched. Widen the window, drop the duration filter, or tail what is arriving.</span>
+              <span>No traces matched. Widen the window, drop the duration filter, or tail what is arriving.</span>
             </div>
           }
         }

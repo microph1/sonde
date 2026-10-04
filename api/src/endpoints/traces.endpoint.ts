@@ -34,6 +34,22 @@ export class TracesEndpoint {
 
   constructor(@Inject(ClickHouseService) private clickhouse: ClickHouseService) {}
 
+  /**
+   * Traces, one row each — not spans.
+   *
+   * The page is called Traces and listed spans, so the same trace appeared
+   * four or five times in a row under four of its own span names, and opening
+   * two of them showed the same waterfall twice. A row is a trace now: when it
+   * started, what it entered through, how many spans and services it touched,
+   * how long the whole thing took.
+   *
+   * The filters still describe spans, because that is what anyone searching
+   * knows — "a trace that touched this service", "a trace with an error". So
+   * they select trace ids first and the row is then built from every span of
+   * those traces, which is why the subquery is not merely an optimisation: a
+   * trace matched by one slow span must still report its full duration and all
+   * of its services.
+   */
   @Lambda({ method: 'POST', path: '/traces/search' })
   public async search(@Body() filters: TraceFilters = {}): Promise<StreamingResult> {
     const params = {
@@ -44,13 +60,43 @@ export class TracesEndpoint {
     };
 
     return this.clickhouse.stream(
-      `SELECT ${SPAN_COLUMNS}
+      `SELECT TraceId,
+              -- Not aliased as Timestamp: an alias shadows the column it is
+              -- named after for the rest of the SELECT, and the duration below
+              -- reads the column.
+              toString(min(Timestamp)) AS StartedAt,
+              -- The root names the trace. When the root is outside the window
+              -- the earliest span stands in, which is honest: it is the oldest
+              -- thing known about this trace.
+              coalesce(
+                nullIf(anyIf(SpanName, ParentSpanId = ''), ''),
+                argMin(SpanName, Timestamp)
+              ) AS RootName,
+              coalesce(
+                nullIf(anyIf(ServiceName, ParentSpanId = ''), ''),
+                argMin(ServiceName, Timestamp)
+              ) AS RootService,
+              count() AS Spans,
+              uniq(ServiceName) AS Services,
+              countIf(StatusCode = 'Error') AS Errors,
+              -- Wall time of the whole trace, not of its longest span. Aliased
+              -- TotalDuration rather than Duration for the same reason as
+              -- above: the window predicate reads the Duration column, and an
+              -- alias would hand it this aggregate instead.
+              max(toUnixTimestamp64Nano(Timestamp) + Duration)
+                - min(toUnixTimestamp64Nano(Timestamp)) AS TotalDuration
        FROM otel_traces
        WHERE ${SPAN_WINDOW_SQL}
-         AND Duration >= {minDuration:UInt64}
-         AND ({status:String} = '' OR StatusCode = {status:String})
-         AND ({name:String} = '' OR SpanName = {name:String})
-       ORDER BY Timestamp DESC
+         AND TraceId IN (
+           SELECT TraceId
+           FROM otel_traces
+           WHERE ${SPAN_WINDOW_SQL}
+             AND Duration >= {minDuration:UInt64}
+             AND ({status:String} = '' OR StatusCode = {status:String})
+             AND ({name:String} = '' OR SpanName = {name:String})
+         )
+       GROUP BY TraceId
+       ORDER BY StartedAt DESC
        LIMIT {limit:UInt32}`,
       params,
     );

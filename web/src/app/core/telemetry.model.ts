@@ -48,6 +48,22 @@ export interface ServiceSummary {
   readonly lastSeen: string;
 }
 
+/**
+ * One trace, as the list shows it: when it started, what it entered through,
+ * and how big it turned out to be. Not a span — the page lists traces.
+ */
+export interface TraceRow {
+  readonly TraceId: string;
+  readonly StartedAt: string;
+  readonly RootName: string;
+  readonly RootService: string;
+  readonly Spans: number;
+  readonly Services: number;
+  readonly Errors: number;
+  /** Nanoseconds, wall time across the whole trace. */
+  readonly TotalDuration: number;
+}
+
 export interface TraceFilters {
   service?: string;
   from?: string;

@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, input } from '@angular/core';
 import { AsyncPipe, DatePipe } from '@angular/common';
-import { map, startWith } from 'rxjs';
+import { defer, map, startWith } from 'rxjs';
 
 import { TracesStore } from '../../core/traces.store';
 import { Span } from '../../core/telemetry.model';
@@ -144,17 +144,13 @@ export class TraceDetail {
   readonly traceId = input.required<string>();
 
   /**
-   * This trace's spans, and only this trace's.
+   * This trace's spans. The store keys them by id, so several open rows can
+   * each draw their own without taking turns.
    *
-   * The store holds one trace at a time, and several of these can exist at
-   * once — one per expanded row, and Material keeps a collapsed panel's
-   * content alive. Filtering by id means a panel can only ever draw its own
-   * trace: the alternative, seen on screen, was row A confidently displaying
-   * row B's waterfall.
+   * `defer` because a required signal input cannot be read while the field it
+   * would initialise is still being constructed; subscribing is late enough.
    */
-  protected readonly spans$ = this.store.trace$.pipe(
-    map((spans) => spans.filter((span) => span.TraceId === this.traceId())),
-  );
+  protected readonly spans$ = defer(() => this.store.spansFor(this.traceId()));
   protected readonly loading$ = this.store.getLoadingFor('loadTrace').pipe(startWith(false));
 
   /** Wall time from the first span's start to the last span's end. */
