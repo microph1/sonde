@@ -1,5 +1,8 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject, input } from '@angular/core';
 import { AsyncPipe, DatePipe } from '@angular/common';
+import { MatButtonModule } from '@angular/material/button';
+import { MatIconModule } from '@angular/material/icon';
+import { Router } from '@angular/router';
 import { map, startWith } from 'rxjs';
 
 import { TracesStore } from '../../core/traces.store';
@@ -16,10 +19,17 @@ interface WaterfallRow {
 
 @Component({
   selector: 'wt-trace-detail',
-  imports: [AsyncPipe, DatePipe, DurationPipe],
+  imports: [AsyncPipe, DatePipe, DurationPipe, MatButtonModule, MatIconModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <h1>Trace <span class="mono">{{ traceId() }}</span></h1>
+    <!-- A panel header, not a page one: this renders inside the drawer over
+         the list, so it carries its own way out rather than a back link. -->
+    <header class="panel-head fx-flex fx-items-center fx-gap-2">
+      <h1>Trace <span class="mono">{{ traceId() }}</span></h1>
+      <button mat-icon-button class="fx-ml-a" aria-label="Close this trace" (click)="close()">
+        <mat-icon>close</mat-icon>
+      </button>
+    </header>
 
     <p class="status fx-flex fx-items-center fx-gap-2" aria-live="polite">
       {{ (spans$ | async)?.length ?? 0 }} spans{{ (loading$ | async) ? ' — streaming…' : '' }}
@@ -57,6 +67,24 @@ interface WaterfallRow {
     </ol>
   `,
   styles: `
+    :host {
+      display: block;
+      padding: var(--fx-s) var(--fx-m) var(--fx-m);
+    }
+
+    .panel-head {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      padding-block: var(--fx-2xs);
+      background: var(--surface);
+    }
+
+    .panel-head h1 {
+      font-size: var(--fx-typography-1);
+      overflow-wrap: anywhere;
+    }
+
     .waterfall {
       list-style: none;
     }
@@ -120,6 +148,7 @@ interface WaterfallRow {
 })
 export class TraceDetail implements OnInit {
   private readonly store = inject(TracesStore);
+  private readonly router = inject(Router);
 
   readonly traceId = input.required<string>();
 
@@ -135,6 +164,10 @@ export class TraceDetail implements OnInit {
    * than appearing all at once.
    */
   protected readonly waterfall$ = this.spans$.pipe(map(toWaterfall));
+
+  protected close(): void {
+    this.router.navigate(['/traces'], { queryParamsHandling: 'preserve' });
+  }
 
   ngOnInit(): void {
     this.store.dispatch('loadTrace', this.traceId());

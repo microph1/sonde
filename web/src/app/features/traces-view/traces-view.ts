@@ -7,9 +7,10 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { AsyncPipe, DatePipe } from '@angular/common';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink, RouterOutlet } from '@angular/router';
+import { MatSidenavModule } from '@angular/material/sidenav';
 import { PageHeader } from '../../shared/page-header';
-import { BehaviorSubject, startWith } from 'rxjs';
+import { BehaviorSubject, map, startWith } from 'rxjs';
 
 import { TracesStore } from '../../core/traces.store';
 import { DEFAULT_RANGE, RANGES, Range } from '../../core/services.store';
@@ -18,125 +19,165 @@ import { DurationPipe } from '../../shared/duration-pipe';
 
 @Component({
   selector: 'wt-traces-view',
-  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, DurationPipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule, PageHeader, MatButtonToggleModule],
+  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, DurationPipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule, PageHeader, MatButtonToggleModule, RouterOutlet, MatSidenavModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <wt-page-header
-      heading="Traces"
-      subtitle="Spans as they were recorded. Search a window, or tail what is arriving now."
-    >
-      <mat-button-toggle-group
-        aria-label="Time range"
-        hideSingleSelectionIndicator
-        [value]="(range$ | async)?.label"
-      >
-        @for (option of ranges; track option.label) {
-          <mat-button-toggle [value]="option.label" (click)="selectRange(option)">
-            {{ option.label }}
-          </mat-button-toggle>
-        }
-      </mat-button-toggle-group>
-    </wt-page-header>
+    <!-- No backdrop: with one, the only click the list accepts is "close", and
+         the thing you most often want next is the trace two rows down. Without
+         it the list stays live and the panel swaps. -->
+    <mat-drawer-container [hasBackdrop]="false">
+      <mat-drawer-content>
+        <wt-page-header
+          heading="Traces"
+          subtitle="Spans as they were recorded. Search a window, or tail what is arriving now."
+        >
+          <mat-button-toggle-group
+            aria-label="Time range"
+            hideSingleSelectionIndicator
+            [value]="(range$ | async)?.label"
+          >
+            @for (option of ranges; track option.label) {
+              <mat-button-toggle [value]="option.label" (click)="selectRange(option)">
+                {{ option.label }}
+              </mat-button-toggle>
+            }
+          </mat-button-toggle-group>
+        </wt-page-header>
 
-    <form [formGroup]="filters" (ngSubmit)="run()" class="filters fx-flex fx-flex-wrap fx-items-end fx-gap-3 fx-mb-4">
-      <mat-form-field subscriptSizing="dynamic">
-        <mat-label>Service</mat-label>
-        <input matInput formControlName="service" placeholder="any" class="mono" />
-      </mat-form-field>
+        <form [formGroup]="filters" (ngSubmit)="run()" class="filters fx-flex fx-flex-wrap fx-items-end fx-gap-3 fx-mb-4">
+          <mat-form-field subscriptSizing="dynamic">
+            <mat-label>Service</mat-label>
+            <input matInput formControlName="service" placeholder="any" class="mono" />
+          </mat-form-field>
 
-      <mat-form-field subscriptSizing="dynamic">
-        <mat-label>Span name</mat-label>
-        <input matInput formControlName="name" placeholder="any" class="mono" />
-      </mat-form-field>
+          <mat-form-field subscriptSizing="dynamic">
+            <mat-label>Span name</mat-label>
+            <input matInput formControlName="name" placeholder="any" class="mono" />
+          </mat-form-field>
 
-      <mat-form-field subscriptSizing="dynamic" class="narrow">
-        <mat-label>Status</mat-label>
-        <mat-select formControlName="status">
-          <mat-option value="">any</mat-option>
-          <mat-option value="Ok">Ok</mat-option>
-          <mat-option value="Error">Error</mat-option>
-          <mat-option value="Unset">Unset</mat-option>
-        </mat-select>
-      </mat-form-field>
+          <mat-form-field subscriptSizing="dynamic" class="narrow">
+            <mat-label>Status</mat-label>
+            <mat-select formControlName="status">
+              <mat-option value="">any</mat-option>
+              <mat-option value="Ok">Ok</mat-option>
+              <mat-option value="Error">Error</mat-option>
+              <mat-option value="Unset">Unset</mat-option>
+            </mat-select>
+          </mat-form-field>
 
-      <mat-form-field subscriptSizing="dynamic" class="narrow">
-        <mat-label>Slower than</mat-label>
-        <input matInput formControlName="minDurationMs" type="number" min="0" />
-        <span matTextSuffix>ms</span>
-      </mat-form-field>
+          <mat-form-field subscriptSizing="dynamic" class="narrow">
+            <mat-label>Slower than</mat-label>
+            <input matInput formControlName="minDurationMs" type="number" min="0" />
+            <span matTextSuffix>ms</span>
+          </mat-form-field>
 
-      <mat-form-field subscriptSizing="dynamic" class="narrow">
-        <mat-label>Limit</mat-label>
-        <input matInput formControlName="limit" type="number" min="1" />
-      </mat-form-field>
+          <mat-form-field subscriptSizing="dynamic" class="narrow">
+            <mat-label>Limit</mat-label>
+            <input matInput formControlName="limit" type="number" min="1" />
+          </mat-form-field>
 
-      <button mat-flat-button type="submit" [disabled]="(live$ | async) ?? false">
-        <mat-icon>search</mat-icon>
-        Search
-      </button>
+          <button mat-flat-button type="submit" [disabled]="(live$ | async) ?? false">
+            <mat-icon>search</mat-icon>
+            Search
+          </button>
 
-      @if ((live$ | async) === true) {
-        <button mat-stroked-button type="button" (click)="stop()">
-          <mat-icon>stop</mat-icon>
-          Stop tail
-        </button>
-      } @else {
-        <button mat-stroked-button type="button" (click)="startLive()">
-          <mat-icon>bolt</mat-icon>
-          Live tail
-        </button>
-      }
-    </form>
-
-    <p class="status fx-flex fx-items-center fx-gap-2" aria-live="polite">
-      @if ((live$ | async) === true) {
-        <span class="pill">live</span>
-      }
-      {{ (rows$ | async)?.length ?? 0 }} spans{{ (searching$ | async) ? ' — streaming…' : '' }}
-    </p>
-
-    <table>
-      <caption class="sr-only">Matching spans</caption>
-      <thead>
-        <tr>
-          <th scope="col">Time</th>
-          <th scope="col">Service</th>
-          <th scope="col">Span</th>
-          <th scope="col">Kind</th>
-          <th scope="col">Duration</th>
-          <th scope="col">Status</th>
-          <th scope="col">Trace</th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (span of rows$ | async; track span.SpanId) {
-          <tr>
-            <td>{{ span.Timestamp | date: 'HH:mm:ss.SSS' }}</td>
-            <td class="mono">{{ span.ServiceName }}</td>
-            <td>{{ span.SpanName }}</td>
-            <td>{{ span.SpanKind }}</td>
-            <td class="num">{{ span.Duration | duration }}</td>
-            <td><span class="chip" [class]="'chip status-' + span.StatusCode">{{ span.StatusCode }}</span></td>
-            <td>
-              <a class="mono" [routerLink]="['/traces', span.TraceId]">{{ span.TraceId.slice(0, 12) }}…</a>
-            </td>
-          </tr>
-        } @empty {
-          @if (!(searching$ | async)) {
-            <tr>
-              <td colspan="7">
-                <div class="nothing-here">
-                  <mat-icon>account_tree</mat-icon>
-                  <span>No spans matched. Widen the window, drop the duration filter, or tail what is arriving.</span>
-                </div>
-              </td>
-            </tr>
+          @if ((live$ | async) === true) {
+            <button mat-stroked-button type="button" (click)="stop()">
+              <mat-icon>stop</mat-icon>
+              Stop tail
+            </button>
+          } @else {
+            <button mat-stroked-button type="button" (click)="startLive()">
+              <mat-icon>bolt</mat-icon>
+              Live tail
+            </button>
           }
-        }
-      </tbody>
-    </table>
+        </form>
+
+        <p class="status fx-flex fx-items-center fx-gap-2" aria-live="polite">
+          @if ((live$ | async) === true) {
+            <span class="pill">live</span>
+          }
+          {{ (rows$ | async)?.length ?? 0 }} spans{{ (searching$ | async) ? ' — streaming…' : '' }}
+        </p>
+
+        <table>
+          <caption class="sr-only">Matching spans</caption>
+          <thead>
+            <tr>
+              <th scope="col">Time</th>
+              <th scope="col">Service</th>
+              <th scope="col">Span</th>
+              <th scope="col">Kind</th>
+              <th scope="col">Duration</th>
+              <th scope="col">Status</th>
+              <th scope="col">Trace</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (span of rows$ | async; track span.SpanId) {
+              <tr>
+                <td>{{ span.Timestamp | date: 'HH:mm:ss.SSS' }}</td>
+                <td class="mono">{{ span.ServiceName }}</td>
+                <td>{{ span.SpanName }}</td>
+                <td>{{ span.SpanKind }}</td>
+                <td class="num">{{ span.Duration | duration }}</td>
+                <td><span class="chip" [class]="'chip status-' + span.StatusCode">{{ span.StatusCode }}</span></td>
+                <td>
+                  <a class="mono" [routerLink]="['/traces', span.TraceId]" queryParamsHandling="preserve">{{ span.TraceId.slice(0, 12) }}…</a>
+                </td>
+              </tr>
+            } @empty {
+              @if (!(searching$ | async)) {
+                <tr>
+                  <td colspan="7">
+                    <div class="nothing-here">
+                      <mat-icon>account_tree</mat-icon>
+                      <span>No spans matched. Widen the window, drop the duration filter, or tail what is arriving.</span>
+                    </div>
+                  </td>
+                </tr>
+              }
+            }
+          </tbody>
+        </table>
+      </mat-drawer-content>
+
+      <!-- The list stays on screen behind it: reading one trace is a step in
+           scanning many, and a page navigation throws the scan away. -->
+      <!-- No (closedStart) handler: the drawer emits one while settling into
+           its initial state, which navigated away from the trace that had just
+           been opened. The route opens it; the backdrop, Escape and the panel's
+           own button are what close it. -->
+      <mat-drawer
+        #panel
+        position="end"
+        mode="over"
+        [opened]="(open$ | async) ?? false"
+        (keydown.escape)="close()"
+      >
+        <router-outlet />
+      </mat-drawer>
+    </mat-drawer-container>
   `,
   styles: `
+    mat-drawer-container {
+      background: transparent;
+      /* The page scrolls, not the container: a nested scrollbar on a table this
+         long is a second thing to get lost in. */
+      min-height: 100%;
+    }
+
+    mat-drawer {
+      width: min(52rem, 92vw);
+      border-left: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    mat-drawer-content {
+      overflow: visible;
+    }
+
     .filters mat-form-field {
       min-width: 12rem;
     }
@@ -178,6 +219,14 @@ export class TracesView implements OnInit {
     limit: new FormControl(200),
   });
 
+  /** Open exactly when the child route names a trace. The URL is the state;
+   * the drawer only reflects it, which is what makes back close the panel and
+   * a pasted link open it. */
+  protected readonly open$ = this.router.events.pipe(
+    startWith(null),
+    map(() => Boolean(this.route.firstChild)),
+  );
+
   protected readonly ranges = RANGES;
 
   /** The window to search. In the URL because a link to "what happened" is
@@ -214,6 +263,12 @@ export class TracesView implements OnInit {
       replaceUrl: true,
     });
     this.run();
+  }
+
+  protected close(): void {
+    if (this.route.firstChild) {
+      this.router.navigate(['/traces'], { queryParamsHandling: 'preserve' });
+    }
   }
 
   protected run(): void {

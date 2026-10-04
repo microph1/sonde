@@ -10,17 +10,23 @@ export const routes: Routes = [
     title: 'Services · sonde',
     loadComponent: () => import('./features/services-view/services-view').then((m) => m.ServicesView),
   },
+  // A trace opens in a panel over the list rather than on a page of its own:
+  // reading one is almost always a step in scanning many, and a navigation
+  // throws away the search you were in the middle of. It stays a child route
+  // so the URL still names the trace - a panel you cannot link to is a worse
+  // page, not a better one.
   {
     path: 'traces',
     canActivate: [authGuard],
     title: 'Traces · sonde',
     loadComponent: () => import('./features/traces-view/traces-view').then((m) => m.TracesView),
-  },
-  {
-    path: 'traces/:traceId',
-    canActivate: [authGuard],
-    title: 'Trace · sonde',
-    loadComponent: () => import('./features/trace-detail/trace-detail').then((m) => m.TraceDetail),
+    children: [
+      {
+        path: ':traceId',
+        title: 'Trace · sonde',
+        loadComponent: () => import('./features/trace-detail/trace-detail').then((m) => m.TraceDetail),
+      },
+    ],
   },
   {
     path: 'metrics',
