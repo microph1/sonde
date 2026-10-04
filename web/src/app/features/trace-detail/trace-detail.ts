@@ -1,12 +1,10 @@
-import { ChangeDetectionStrategy, Component, OnInit, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, input } from '@angular/core';
 import { AsyncPipe, DatePipe } from '@angular/common';
-import { MatButtonModule } from '@angular/material/button';
-import { MatIconModule } from '@angular/material/icon';
-import { Router } from '@angular/router';
 import { map, startWith } from 'rxjs';
 
 import { TracesStore } from '../../core/traces.store';
 import { Span } from '../../core/telemetry.model';
+import { CopyButton } from '../../shared/copy-button';
 import { DurationPipe } from '../../shared/duration-pipe';
 
 interface WaterfallRow {
@@ -19,17 +17,17 @@ interface WaterfallRow {
 
 @Component({
   selector: 'wt-trace-detail',
-  imports: [AsyncPipe, DatePipe, DurationPipe, MatButtonModule, MatIconModule],
+  imports: [AsyncPipe, DatePipe, DurationPipe, CopyButton],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <!-- A panel header, not a page one: this renders inside the drawer over
-         the list, so it carries its own way out rather than a back link. -->
-    <header class="panel-head fx-flex fx-items-center fx-gap-2">
-      <h1>Trace <span class="mono">{{ traceId() }}</span></h1>
-      <button mat-icon-button class="fx-ml-a" aria-label="Close this trace" (click)="close()">
-        <mat-icon>close</mat-icon>
-      </button>
-    </header>
+
+    <!-- The trace id left the row when the row became a panel header, and it
+         is the thing you paste into a message to someone. -->
+    <p class="trace-id fx-flex fx-items-center fx-gap-1">
+      <span class="dim">Trace</span>
+      <code>{{ traceId() }}</code>
+      <wt-copy [value]="traceId()" label="Copy the trace id" />
+    </p>
 
     <p class="status fx-flex fx-items-center fx-gap-2" aria-live="polite">
       {{ (spans$ | async)?.length ?? 0 }} spans{{ (loading$ | async) ? ' — streaming…' : '' }}
@@ -67,23 +65,17 @@ interface WaterfallRow {
     </ol>
   `,
   styles: `
+    .trace-id {
+      margin: 0;
+      font-size: var(--fx-typography--1);
+    }
+
     :host {
       display: block;
-      padding: var(--fx-s) var(--fx-m) var(--fx-m);
+      padding-block: var(--fx-2xs) var(--fx-s);
     }
 
-    .panel-head {
-      position: sticky;
-      top: 0;
-      z-index: 1;
-      padding-block: var(--fx-2xs);
-      background: var(--surface);
-    }
 
-    .panel-head h1 {
-      font-size: var(--fx-typography-1);
-      overflow-wrap: anywhere;
-    }
 
     .waterfall {
       list-style: none;
@@ -146,13 +138,23 @@ interface WaterfallRow {
     }
   `,
 })
-export class TraceDetail implements OnInit {
+export class TraceDetail {
   private readonly store = inject(TracesStore);
-  private readonly router = inject(Router);
 
   readonly traceId = input.required<string>();
 
-  protected readonly spans$ = this.store.trace$;
+  /**
+   * This trace's spans, and only this trace's.
+   *
+   * The store holds one trace at a time, and several of these can exist at
+   * once — one per expanded row, and Material keeps a collapsed panel's
+   * content alive. Filtering by id means a panel can only ever draw its own
+   * trace: the alternative, seen on screen, was row A confidently displaying
+   * row B's waterfall.
+   */
+  protected readonly spans$ = this.store.trace$.pipe(
+    map((spans) => spans.filter((span) => span.TraceId === this.traceId())),
+  );
   protected readonly loading$ = this.store.getLoadingFor('loadTrace').pipe(startWith(false));
 
   /** Wall time from the first span's start to the last span's end. */
@@ -165,13 +167,8 @@ export class TraceDetail implements OnInit {
    */
   protected readonly waterfall$ = this.spans$.pipe(map(toWaterfall));
 
-  protected close(): void {
-    this.router.navigate(['/traces'], { queryParamsHandling: 'preserve' });
-  }
-
-  ngOnInit(): void {
-    this.store.dispatch('loadTrace', this.traceId());
-  }
+  // No lifecycle fetch: whoever opens this decides when to load, because a
+  // panel that is reopened rather than recreated never gets another one.
 }
 
 function totalOf(spans: readonly Span[]): number {
