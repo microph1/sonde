@@ -99,12 +99,18 @@ jobs:
     # this job builds both TypeScript projects, and neither builds from what is
     # on npm today. Until then a release tags and stops, and the deploy is the
     # one step still done by hand.
-    if: needs.Version.outputs.bumped == 'true' && vars.PUBLISHED_PACKAGES == 'true'
+    # A manual run deploys whatever master is at, bump or no bump: re-running a
+    # deploy after fixing the box is a thing you need at the moment nothing has
+    # changed in the code.
+    if: >-
+      (needs.Version.outputs.bumped == 'true' || github.event_name == 'workflow_dispatch')
+      && vars.PUBLISHED_PACKAGES == 'true'
 
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.Version.outputs.next }}
+          # The tag when there is one, master when this was run by hand.
+          ref: ${{ needs.Version.outputs.bumped == 'true' && needs.Version.outputs.next || github.ref }}
 
       - uses: actions/setup-node@v4
         with:
