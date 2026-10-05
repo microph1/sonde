@@ -1,10 +1,10 @@
 import { Injectable, inject } from '@angular/core';
 import { Effect, Reduce, Store, makeStore } from '@microphi/store';
-import { EMPTY, Observable, bufferTime, filter, map, scan, startWith } from 'rxjs';
+import { EMPTY, Observable, bufferTime, filter, from, map, scan, startWith } from 'rxjs';
 
 import { API_BASE_URL } from './api-base-url';
 import { ndjsonRows, sseEvents } from './ndjson-stream';
-import { Span, TraceFilters, TraceRow } from './telemetry.model';
+import { LogRecord, Span, TraceFilters, TraceRow } from './telemetry.model';
 
 export interface TracesState {
   rows: TraceRow[];
@@ -16,6 +16,14 @@ export interface TracesState {
    * one slot would have meant every row but the newest going blank.
    */
   traces: Record<string, Span[]>;
+  /**
+   * Log records by trace id.
+   *
+   * A span says a thing took 40 ms; the log line says what it was doing. They
+   * are two halves of one story and were two pages apart, even though every
+   * record already carried the trace id that joins them.
+   */
+  logs: Record<string, LogRecord[]>;
   live: boolean;
 }
 
@@ -23,6 +31,7 @@ export interface TracesActions {
   search: (filters: TraceFilters) => Observable<TraceRow[]>;
   tail: (filters: TraceFilters) => Observable<TraceRow[]>;
   loadTrace: (traceId: string) => Observable<Span[]>;
+  loadLogs: (query: TraceLogsQuery) => Observable<TraceLogs>;
   stop: () => Observable<void>;
 }
 
@@ -89,6 +98,18 @@ const MAX_LIVE_ROWS = 1000;
  * unsubscribing aborts its HTTP request, so an abandoned query stops occupying
  * the server rather than racing the new one into the same list.
  */
+export interface TraceLogsQuery {
+  readonly traceId: string;
+  /** The window the trace was found in — a log search defaults to the last
+   * hour, which for a trace opened from a seven-day search finds nothing. */
+  readonly from: string;
+}
+
+export interface TraceLogs {
+  readonly traceId: string;
+  readonly records: LogRecord[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class TracesStore
   extends Store<TracesState, TracesActions>
@@ -98,15 +119,21 @@ export class TracesStore
 
   readonly rows$ = this.select((state) => state.rows);
   readonly traces$ = this.select((state) => state.traces);
+  readonly logs$ = this.select((state) => state.logs);
 
   /** One trace's spans, for a view that is showing exactly that one. */
   spansFor(traceId: string): Observable<Span[]> {
     return this.traces$.pipe(map((traces) => traces[traceId] ?? []));
   }
+
+  /** And the lines it logged. */
+  logsFor(traceId: string): Observable<LogRecord[]> {
+    return this.logs$.pipe(map((logs) => logs[traceId] ?? []));
+  }
   readonly live$ = this.select((state) => state.live);
 
   constructor() {
-    super({ rows: [], traces: {}, live: false });
+    super({ rows: [], traces: {}, logs: {}, live: false });
   }
 
   @Effect()
@@ -180,6 +207,39 @@ export class TracesStore
   /** Ends whichever stream is running. Dispatching any action cancels the
    * previous one through `switchMap`; this is the action that starts nothing in
    * its place. */
+  /**
+   * Every log line recorded under a trace.
+   *
+   * One request when a trace is opened rather than one per span: a trace with
+   * forty spans would otherwise be forty round trips to show what is one
+   * query, and the client already knows which span each line belongs to —
+   * every record carries the span id.
+   */
+  @Effect()
+  loadLogs(query: TraceLogsQuery): Observable<TraceLogs> {
+    return from(
+      fetch(`${this.baseUrl}/logs/search`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ traceId: query.traceId, from: query.from, limit: 500 }),
+      })
+        .then((response) => (response.ok ? response.text() : ''))
+        .then((body) => ({
+          traceId: query.traceId,
+          records: body
+            .split('\n')
+            .filter((line) => line.length > 0)
+            .map((line) => JSON.parse(line) as LogRecord),
+        })),
+    );
+  }
+
+  @Reduce()
+  onLoadLogs(state: TracesState, loaded: TraceLogs): TracesState {
+    return { ...state, logs: { ...state.logs, [loaded.traceId]: loaded.records } };
+  }
+
   @Effect()
   stop(): Observable<void> {
     return EMPTY;

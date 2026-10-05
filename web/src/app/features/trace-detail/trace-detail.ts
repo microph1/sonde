@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, input } from '@angular/core';
 import { AsyncPipe, DatePipe } from '@angular/common';
-import { defer, map, startWith } from 'rxjs';
+import { combineLatest, defer, map, startWith } from 'rxjs';
 
 import { TracesStore } from '../../core/traces.store';
 import { Span } from '../../core/telemetry.model';
@@ -63,6 +63,33 @@ interface WaterfallRow {
         }
       }
     </ol>
+    @if (logs$ | async; as logs) {
+      @if (logs.length) {
+        <h2 class="logs-head">
+          {{ logs.length }} log {{ logs.length === 1 ? 'record' : 'records' }}
+        </h2>
+
+        <ol class="logs fx-m-0 fx-p-0">
+          @for (line of logs; track $index) {
+            <li class="line">
+              <time class="dim">{{ line.record.Timestamp | date: 'HH:mm:ss.SSS' }}</time>
+              <span class="chip" [class]="'chip ' + severityClass(line.record.SeverityNumber)">
+                {{ line.record.SeverityText || '—' }}
+              </span>
+              <!-- Which step of the trace said it. A line attributed to nothing
+                   is a line you have to go and place yourself. -->
+              <span class="from mono dim" [title]="line.record.ServiceName">{{ line.span }}</span>
+              <span class="body">
+                {{ line.record.Body }}
+                @if (line.fields) {
+                  <span class="fields dim">{{ line.fields }}</span>
+                }
+              </span>
+            </li>
+          }
+        </ol>
+      }
+    }
   `,
   styles: `
     .trace-id {
@@ -162,6 +189,42 @@ export class TraceDetail {
    * than appearing all at once.
    */
   protected readonly waterfall$ = this.spans$.pipe(map(toWaterfall));
+
+  /**
+   * The trace's log lines, each attached to the span that emitted it.
+   *
+   * Every record already carried the span id; it was only ever a question of
+   * showing the two together. A line whose span is not in this trace's spans
+   * keeps the trace but loses the step name, which is honest — the span may
+   * simply not have been recorded.
+   */
+  protected readonly logs$ = combineLatest([
+    defer(() => this.store.logsFor(this.traceId())),
+    this.spans$,
+  ]).pipe(
+    map(([records, spans]) => {
+      const names = new Map(spans.map((span) => [span.SpanId, span.SpanName]));
+
+      return [...records]
+        .sort((a, b) => a.Timestamp.localeCompare(b.Timestamp))
+        .map((record) => ({
+          record,
+          span: names.get(record.SpanId) ?? '—',
+          fields: Object.entries(record.LogAttributes ?? {})
+            .slice(0, 3)
+            .map(([key, value]) => `${key}=${String(value)}`)
+            .join(' '),
+        }));
+    }),
+  );
+
+  /** OTel severity numbers: 1-4 trace, 5-8 debug, 9-12 info, 13-16 warn, 17+ error. */
+  protected severityClass(severity: number): string {
+    if (severity >= 17) return 'sev-error';
+    if (severity >= 13) return 'sev-warn';
+    if (severity >= 9) return 'sev-info';
+    return 'sev-debug';
+  }
 
   // No lifecycle fetch: whoever opens this decides when to load, because a
   // panel that is reopened rather than recreated never gets another one.

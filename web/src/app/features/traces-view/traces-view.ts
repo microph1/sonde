@@ -300,6 +300,13 @@ export class TracesView implements OnInit {
    */
   protected open(traceId: string): void {
     this.store.dispatch('loadTrace', traceId);
+    // The same window the trace was found in: a log search defaults to the
+    // last hour, and a trace opened from a seven-day search would come back
+    // with nothing to show for itself.
+    this.store.dispatch('loadLogs', {
+      traceId,
+      from: new Date(Date.now() - this.chosen$$.value.windowMinutes * 60_000).toISOString(),
+    });
   }
 
 
