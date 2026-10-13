@@ -2,6 +2,19 @@
 @use 'utopia-core-scss/src/utopia' as utopia;
 @use 'material-symbols/rounded';
 
+// Self-hosted rather than fetched from a CDN, for the same reason Dex is in the
+// compose stack: this is the console you open when something is down, and it
+// should not need a third party to render. Latin only, and only the weights in
+// use — the whole package carries cyrillic, greek and vietnamese at every
+// weight, which is a megabyte of faces nothing here can display.
+// Namespaced one by one because every file is called `latin-<weight>.css` and
+// two modules may not share a namespace.
+@use '@fontsource/ibm-plex-sans/latin-400.css' as sans-400;
+@use '@fontsource/ibm-plex-sans/latin-500.css' as sans-500;
+@use '@fontsource/ibm-plex-sans/latin-600.css' as sans-600;
+@use '@fontsource/ibm-plex-mono/latin-400.css' as mono-400;
+@use '@fontsource/ibm-plex-mono/latin-500.css' as mono-500;
+
 // @microphi utility partials — pure CSS emitters, pulled in individually rather
 // than through main.scss, which still uses the deprecated @import.
 @use '@microphi/styles/scss/display';
@@ -39,8 +52,8 @@ html {
       theme-type: dark,
     ),
     typography: (
-      plain-family: (ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif),
-      brand-family: (ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif),
+      plain-family: ('IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif),
+      brand-family: ('IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif),
     ),
     density: -2,
   ));
@@ -124,14 +137,18 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-size: var(--fx-typography-0);
   line-height: 1.5;
+  // Digits of one width, everywhere. Half of this console is counts and
+  // timestamps in columns, and proportional figures make them jitter as they
+  // tick.
+  font-variant-numeric: tabular-nums;
 }
 
 code,
 .mono {
-  font-family: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  font-family: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 0.92em;
 }
 
