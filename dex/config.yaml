@@ -33,3 +33,11 @@ staticPasswords:
     hash: "$2a$10$UpEZsg96Aip.K.YkfcP50.QBf3At4MQ3VjCt6g9MnYVIY7tnkRh32"
     username: "dcavaliere"
     userID: "00000000-0000-0000-0000-000000000001"
+  # The account the Playwright suite logs in as. A second entry rather than the
+  # human one, so the tests do not depend on a password only one person knows,
+  # and so rotating that password cannot break CI. Local only — the deployed
+  # Dex (deploy/dex.yaml) has no static passwords at all.
+  - email: "e2e@local"
+    hash: "$2y$10$X.WY9kYo46SCi9FOKevqmuOj0WSgmZgbjHn8qGBEeht2xmYuwbw/m"
+    username: "e2e"
+    userID: "00000000-0000-0000-0000-000000000002"

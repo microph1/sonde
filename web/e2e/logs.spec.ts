@@ -7,7 +7,7 @@ test.describe('logs', () => {
     const service = uniqueService('logs');
     const { traceId } = await seedTrace(request, service);
 
-    await page.goto(`/logs?service=${service}`);
+    await page.goto(`/all/logs?service=${service}`);
 
     await expect(page.locator('tbody')).toContainText(`e2e log for ${service}`);
     await expect(page.getByRole('link', { name: new RegExp(traceId.slice(0, 12)) })).toBeVisible();
@@ -17,7 +17,7 @@ test.describe('logs', () => {
     const errored = uniqueService('logs-error');
     await seedTrace(request, errored, { status: 2 });
 
-    await page.goto(`/logs?service=${errored}&minSeverity=17`);
+    await page.goto(`/all/logs?service=${errored}&minSeverity=17`);
 
     await expect(page.locator('tbody .sev-error').first()).toHaveText('ERROR');
   });
@@ -25,7 +25,7 @@ test.describe('logs', () => {
   test('a live tail picks up a record sent while it is open', async ({ page, request }) => {
     const service = uniqueService('logs-tail');
 
-    await page.goto(`/logs?service=${service}`);
+    await page.goto(`/all/logs?service=${service}`);
     await page.getByRole('button', { name: 'Live tail' }).click();
     await expect(page.locator('.pill')).toHaveText('live');
 

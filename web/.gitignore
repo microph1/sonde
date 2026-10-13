@@ -42,3 +42,10 @@ __screenshots__/
 # System files
 .DS_Store
 Thumbs.db
+
+# Playwright. The session is a real token for whoever ran the suite, and the
+# artefacts are a snapshot of one failing run - neither is worth a commit.
+/e2e/.auth
+/test-results
+/playwright-report
+/blob-report

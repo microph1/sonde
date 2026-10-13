@@ -46,13 +46,39 @@ ng test
 
 ## Running end-to-end tests
 
-For end-to-end (e2e) testing, run:
-
 ```bash
-ng e2e
+npx playwright test
 ```
 
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
+These are system tests, not component tests: they drive the real console against
+the real API, ClickHouse and Redpanda, and seed their data by posting OTLP to the
+receiver like any other client would. Every bug they have caught has been an
+integration bug, which is the argument for running them that way.
+
+What has to be up first:
+
+- the stack — `docker compose up -d` from the repository root;
+- the read API, **with authentication on**. `SONDE_AUTH_DISABLED=true` skips the
+  Dex redirect, and the suite signs in through it:
+
+  ```bash
+  SONDE_OIDC_ISSUER=http://localhost:5556/dex \
+  SONDE_OIDC_CLIENT_ID=sonde \
+  SONDE_OIDC_CLIENT_SECRET=dev-client-secret \
+  SONDE_SESSION_SECRET=dev-session-secret-change-me \
+  SONDE_PUBLIC_URL=http://localhost:4200 \
+  node dist/main.js
+  ```
+
+The dev server is started by Playwright if nothing is already listening on 4200.
+
+Sign-in happens once, in `login.setup.ts`, and the session is reused by every
+other spec — through the real identity provider rather than by forging a cookie,
+because a forged session proves the console renders while saying nothing about
+whether anyone can get into it. It signs in as `e2e@local` / `sonde-e2e`, a
+static account in `dex/config.yaml` that exists so the suite does not depend on a
+password only one person knows. Override with `SONDE_E2E_USER` and
+`SONDE_E2E_PASSWORD`.
 
 ## Additional Resources
 

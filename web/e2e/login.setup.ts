@@ -11,10 +11,10 @@ const SESSION = 'e2e/.auth/session.json';
  * into it.
  */
 setup('sign in', async ({ page }) => {
-  const user = process.env['SONDE_E2E_USER'] ?? 'dcavaliere@local';
-  const password = process.env['SONDE_E2E_PASSWORD'] ?? 'sonde';
+  const user = process.env['SONDE_E2E_USER'] ?? 'e2e@local';
+  const password = process.env['SONDE_E2E_PASSWORD'] ?? 'sonde-e2e';
 
-  await page.goto('/services');
+  await page.goto('/all/services');
 
   // The guard bounces an anonymous visitor to the provider.
   await page.waitForURL(/\/dex\/auth/, { timeout: 20_000 });

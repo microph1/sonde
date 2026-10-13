@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 /** Runs without the stored session, so it proves the guard rather than assuming
  * it. */
 test('an anonymous visitor is sent to the identity provider', async ({ page }) => {
-  await page.goto('/services');
+  await page.goto('/all/services');
 
   await page.waitForURL(/\/dex\/auth/, { timeout: 20_000 });
   await expect(page.locator('input[name=password]')).toBeVisible();

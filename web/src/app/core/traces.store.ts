@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { Effect, Reduce, Store, makeStore } from '@microphi/store';
-import { EMPTY, Observable, bufferTime, filter, from, map, scan, startWith } from 'rxjs';
+import { EMPTY, Observable, bufferTime, defaultIfEmpty, filter, from, map, scan, startWith } from 'rxjs';
 
 import { API_BASE_URL } from './api-base-url';
 import { AppScope } from './app-scope';
@@ -266,6 +266,14 @@ export function accumulate<T>() {
       bufferTime(FLUSH_MS),
       filter((batch) => batch.length > 0),
       scan((rows: T[], batch) => [...rows, ...batch], []),
+      // A search that matched nothing is still an answer, and it has to be
+      // delivered: an effect that completes without emitting runs no reducer,
+      // so the previous search's rows stayed on screen under the new search's
+      // filters — and after switching app, that meant another app's traces,
+      // labelled with this one's name and streaming forever. At the end rather
+      // than the start, so a search that does match something never flashes
+      // "nothing matched" on its way there.
+      defaultIfEmpty([] as T[]),
     );
 }
 

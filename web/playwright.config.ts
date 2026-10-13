@@ -35,6 +35,11 @@ export default defineConfig({
     {
       name: 'console',
       dependencies: ['setup'],
+      // The anonymous specs have a project of their own, without the session.
+      // Run here as well they prove nothing: a signed-in visitor is not
+      // redirected and a request carrying the cookie is not refused, so both
+      // fail while the guard is working exactly as intended.
+      testIgnore: /anonymous\.spec\.ts/,
       use: { ...devices['Desktop Chrome'], storageState: 'e2e/.auth/session.json' },
     },
     {
