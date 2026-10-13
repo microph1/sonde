@@ -158,7 +158,7 @@ const SUMMARY_CHARS = 70;
             </td>
             <td>
               @if (record.TraceId) {
-                <a class="mono" [routerLink]="['/traces', record.TraceId]">{{ record.TraceId.slice(0, 12) }}…</a>
+                <a class="mono" [routerLink]="scope.link('traces', record.TraceId)">{{ record.TraceId.slice(0, 12) }}…</a>
               }
             </td>
           </tr>
@@ -335,7 +335,7 @@ const SUMMARY_CHARS = 70;
 })
 export class LogsView implements OnInit {
   private readonly store = inject(LogsStore);
-  private readonly scope = inject(AppScope);
+  protected readonly scope = inject(AppScope);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
 

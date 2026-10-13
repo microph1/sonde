@@ -106,10 +106,10 @@ import { VolumeChart } from '../../shared/volume-chart';
             <td>{{ service.metrics | number }}</td>
             <td>{{ service.lastSeen | date: 'medium' }}</td>
             <td class="fx-flex fx-gap-3">
-              <a [routerLink]="['/traces']" [queryParams]="{ service: service.ServiceName }">traces</a>
-              <a [routerLink]="['/logs']" [queryParams]="{ service: service.ServiceName }">logs</a>
+              <a [routerLink]="scope.link('traces')" [queryParams]="{ service: service.ServiceName }">traces</a>
+              <a [routerLink]="scope.link('logs')" [queryParams]="{ service: service.ServiceName }">logs</a>
               @if (service.metrics) {
-                <a [routerLink]="['/metrics']">metrics</a>
+                <a [routerLink]="scope.link('metrics')">metrics</a>
               }
             </td>
           </tr>
@@ -188,7 +188,7 @@ import { VolumeChart } from '../../shared/volume-chart';
 })
 export class ServicesView implements OnInit {
   private readonly store = inject(ServicesStore);
-  private readonly scope = inject(AppScope);
+  protected readonly scope = inject(AppScope);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
 
@@ -225,6 +225,8 @@ export class ServicesView implements OnInit {
       const spans = points.reduce((sum, point) => sum + point.spans, 0);
       const logs = points.reduce((sum, point) => sum + point.logs, 0);
       const errors = points.reduce((sum, point) => sum + point.errors, 0);
+      const spanErrors = points.reduce((sum, point) => sum + point.spanErrors, 0);
+      const logErrors = points.reduce((sum, point) => sum + point.logErrors, 0);
       const services = new Set(points.map((point) => point.ServiceName)).size;
 
       // Every tile leads somewhere: a number worth showing is a number someone
@@ -235,7 +237,7 @@ export class ServicesView implements OnInit {
           value: spans,
           detail: `last ${range.label}`,
           alarming: false,
-          link: ['/traces'],
+          link: this.scope.link('traces'),
           params: {},
           fragment: undefined,
         },
@@ -244,18 +246,21 @@ export class ServicesView implements OnInit {
           value: logs,
           detail: `last ${range.label}`,
           alarming: false,
-          link: ['/logs'],
+          link: this.scope.link('logs'),
           params: {},
           fragment: undefined,
         },
         {
           label: 'Errors',
           value: errors,
-          detail:
-            spans + logs > 0 ? `${((errors / (spans + logs)) * 100).toFixed(1)}% of records` : '—',
+          // Which signal they came from, because the number counts both and the
+          // link can only go to one. A window whose errors are all log records
+          // sent you to Traces filtered to Error, which is empty by definition —
+          // a tile reading 8 and a page reading 0, with nothing to say why.
+          detail: errorDetail(errors, spanErrors, logErrors, spans + logs),
           alarming: errors > 0,
-          link: ['/traces'],
-          params: { status: 'Error' },
+          link: this.scope.link(spanErrors > 0 ? 'traces' : 'logs'),
+          params: spanErrors > 0 ? { status: 'Error' } : { minSeverity: 17 },
           fragment: undefined,
         },
         {
@@ -346,4 +351,33 @@ export class ServicesView implements OnInit {
       replaceUrl: true,
     });
   }
+}
+
+/**
+ * What the error count is made of.
+ *
+ * Two signals can report an error and they are counted together, so the tile
+ * says which kind it found rather than leaving the share of records to imply
+ * it — the share is the same number whether the errors were spans or logs, and
+ * only one of those is where the link goes.
+ */
+function errorDetail(
+  errors: number,
+  spanErrors: number,
+  logErrors: number,
+  records: number,
+): string {
+  if (errors === 0) {
+    return records > 0 ? 'none' : '—';
+  }
+
+  const share = records > 0 ? `${((errors / records) * 100).toFixed(1)}% of records` : '';
+  const kind =
+    spanErrors > 0 && logErrors > 0
+      ? `${spanErrors} in spans, ${logErrors} in logs`
+      : spanErrors > 0
+        ? 'in spans'
+        : 'in logs';
+
+  return share ? `${kind} · ${share}` : kind;
 }

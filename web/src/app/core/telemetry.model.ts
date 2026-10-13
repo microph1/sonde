@@ -92,6 +92,10 @@ export interface VolumePoint {
   readonly spans: number;
   readonly logs: number;
   readonly errors: number;
+  /** The same errors, by the signal that reported them — a count that links
+   * somewhere has to know where. */
+  readonly spanErrors: number;
+  readonly logErrors: number;
 }
 
 /** Long-form series data: one entry per bucket per series. The chart's only

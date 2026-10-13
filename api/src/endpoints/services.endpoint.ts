@@ -78,18 +78,29 @@ export class ServicesEndpoint {
     @Path('app') app?: string,
   ): Promise<VolumePoint[]> {
     const window = clamp(Number(windowMinutes ?? 360), 5, 7 * 24 * 60);
-    const bucket = clamp(Number(bucketSeconds ?? 300), 10, 3600);
+    // A day, not an hour. The old ceiling was below the three-hour bucket the
+    // seven-day range asks for, so the server quietly answered in hourly
+    // buckets while the client filled gaps on a three-hour grid: two thirds of
+    // the real buckets missed that grid and were replaced by zeros. The
+    // overview read 8 errors where there were 55, and the charts were wrong the
+    // same way — silently, because a clamp has no way to say it clamped.
+    const bucket = clamp(Number(bucketSeconds ?? 300), 10, 24 * 60 * 60);
     // From an allow-list, never from the request: this one reaches the SQL text
     // rather than travelling as a bound parameter.
     const dimension = groupingExpression(group);
 
     return this.clickhouse.rows<VolumePoint>(
       `SELECT toString(bucket) AS bucket, name AS ServiceName,
-              sum(spans) AS spans, sum(logs) AS logs, sum(errors) AS errors
+              sum(spans) AS spans, sum(logs) AS logs, sum(errors) AS errors,
+              -- Split as well as summed: "errors" on the overview means both
+              -- signals, but anything linking to one of them has to know which
+              -- one actually has any, or it sends you to an empty page.
+              sum(spanErrors) AS spanErrors, sum(logErrors) AS logErrors
        FROM (
          SELECT toStartOfInterval(Timestamp, INTERVAL {bucket:UInt32} SECOND) AS bucket,
                 ${dimension} AS name, count() AS spans, 0 AS logs,
-                countIf(StatusCode = 'Error') AS errors
+                countIf(StatusCode = 'Error') AS errors,
+                countIf(StatusCode = 'Error') AS spanErrors, 0 AS logErrors
          FROM otel_traces
          WHERE Timestamp >= now() - INTERVAL {window:UInt32} MINUTE
            AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
@@ -97,7 +108,8 @@ export class ServicesEndpoint {
          UNION ALL
          SELECT toStartOfInterval(Timestamp, INTERVAL {bucket:UInt32} SECOND) AS bucket,
                 ${dimension} AS name, 0 AS spans, count() AS logs,
-                countIf(SeverityNumber >= 17) AS errors
+                countIf(SeverityNumber >= 17) AS errors,
+                0 AS spanErrors, countIf(SeverityNumber >= 17) AS logErrors
          FROM otel_logs
          WHERE Timestamp >= now() - INTERVAL {window:UInt32} MINUTE
            AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})

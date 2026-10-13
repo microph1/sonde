@@ -186,6 +186,8 @@ export function densify(points: VolumePoint[], range: Range): VolumePoint[] {
           spans: 0,
           logs: 0,
           errors: 0,
+          spanErrors: 0,
+          logErrors: 0,
         },
       );
     }

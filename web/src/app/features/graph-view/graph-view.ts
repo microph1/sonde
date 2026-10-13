@@ -171,7 +171,7 @@ const ERROR_THRESHOLD = 0.01;
                 <td class="num">{{ edge.p95Ms | number: '1.0-1' }} ms</td>
                 <td class="dim">{{ edge.kinds }}</td>
                 <td>
-                  <a [routerLink]="['/traces']" [queryParams]="{ service: edge.target }">traces</a>
+                  <a [routerLink]="scope.link('traces')" [queryParams]="{ service: edge.target }">traces</a>
                 </td>
               </tr>
             }
@@ -184,7 +184,7 @@ const ERROR_THRESHOLD = 0.01;
                 <td class="num">{{ entry.p95Ms | number: '1.0-1' }} ms</td>
                 <td class="dim">{{ entry.kinds }}</td>
                 <td>
-                  <a [routerLink]="['/traces']" [queryParams]="{ service: entry.target }">traces</a>
+                  <a [routerLink]="scope.link('traces')" [queryParams]="{ service: entry.target }">traces</a>
                 </td>
               </tr>
             }
@@ -288,7 +288,7 @@ const ERROR_THRESHOLD = 0.01;
 })
 export class GraphView implements OnInit {
   private readonly store = inject(GraphStore);
-  private readonly scope = inject(AppScope);
+  protected readonly scope = inject(AppScope);
   private readonly router = inject(Router);
 
   protected readonly ranges = RANGES;
@@ -332,7 +332,7 @@ export class GraphView implements OnInit {
   }
 
   protected openTraces(service: string): void {
-    this.router.navigate(['/traces'], { queryParams: { service } });
+    this.router.navigate(this.scope.link('traces'), { queryParams: { service } });
   }
 
   protected tooltip(node: PlacedNode): string {

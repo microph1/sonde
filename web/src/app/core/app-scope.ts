@@ -59,6 +59,19 @@ export class AppScope {
     return this.idFromUrl();
   }
 
+  /**
+   * A router link to another section of the same app.
+   *
+   * Every in-page link has to carry the scope now that it is in the path, and
+   * an absolute `['/traces']` does not merely lose the app — it matches
+   * `:appId` and lands on `/traces/services`, looking for an app called
+   * "traces". Building them here is what stops that being discovered one dead
+   * link at a time.
+   */
+  link(...segments: (string | number)[]): (string | number)[] {
+    return ['/', this.currentId, ...segments];
+  }
+
   /** The same page, under a different app. */
   switchTo(appId: string): void {
     const rest = this.router.url.split('/').slice(2).join('/');
