@@ -17,8 +17,9 @@ test.describe('services overview', () => {
     await page.goto('/all/services?range=1h');
 
     await expect(page.locator('#services')).toContainText(service);
-    // Tiles read from the same window the charts do.
-    await expect(tile(page, 'Spans')).not.toContainText('0');
+    // Tiles read from the same window the charts do. The reading itself, not
+    // the tile's text: "not 0" against the whole tile fails on a count of 130.
+    await expect(tile(page, 'Spans').locator('.value')).not.toHaveText('0');
   });
 
   test('the range lives in the URL and a bare link gets the default', async ({ page }) => {

@@ -3,7 +3,6 @@ import { AsyncPipe } from '@angular/common';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatMenuModule } from '@angular/material/menu';
-import { MatTabsModule } from '@angular/material/tabs';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 
@@ -27,7 +26,6 @@ interface Section {
     RouterLink,
     RouterLinkActive,
     MatToolbarModule,
-    MatTabsModule,
     MatButtonModule,
     MatIconModule,
     MatMenuModule,
@@ -63,16 +61,17 @@ interface Section {
         </button>
       </mat-menu>
 
-      <!-- A tab bar rather than a row of links: the active indicator is the
-           thing that says where you are, and Material draws and moves it. -->
-      <nav mat-tab-nav-bar [tabPanel]="panel" aria-label="Sections" class="sections">
+      <!-- Links, not tabs. A tab bar belongs to the panel underneath it and is
+           drawn full height with an ink bar along the bottom, which inside a
+           toolbar reads as a second header stuck to the first. These are what
+           they are: five places to go, the current one marked. -->
+      <nav class="sections fx-flex fx-items-center fx-gap-1" aria-label="Sections">
         @for (section of sections; track section.path) {
           <a
-            mat-tab-link
+            class="section fx-flex fx-items-center fx-gap-1"
             [routerLink]="['/', (appId$ | async) ?? 'all', section.path]"
-            routerLinkActive
-            #link="routerLinkActive"
-            [active]="link.isActive"
+            routerLinkActive="current"
+            ariaCurrentWhenActive="page"
           >
             <mat-icon>{{ section.icon }}</mat-icon>
             {{ section.label }}
@@ -97,11 +96,9 @@ interface Section {
       }
     </mat-toolbar>
 
-    <mat-tab-nav-panel #panel>
-      <main class="fx-p-5">
-        <router-outlet />
-      </main>
-    </mat-tab-nav-panel>
+    <main class="fx-p-5">
+      <router-outlet />
+    </main>
   `,
   styles: `
     .scope {
@@ -136,19 +133,38 @@ interface Section {
       color: var(--accent);
     }
 
-    /* Inside a toolbar the bar has to give up the bottom rule it would
-       otherwise draw across the whole header. */
-    .sections {
-      --mat-tab-container-height: 3rem;
-
-      border-bottom: 0;
+    .section {
+      padding: var(--fx-3xs) var(--fx-2xs);
+      border-radius: var(--mat-sys-corner-small);
+      color: var(--text-dim);
+      font-size: var(--fx-typography--1);
+      text-decoration: none;
+      white-space: nowrap;
+      transition:
+        color 120ms ease,
+        background 120ms ease;
     }
 
-    .sections mat-icon {
-      margin-inline-end: var(--fx-3xs);
+    .section:hover {
+      color: var(--text);
+      background: var(--surface-raised);
+    }
+
+    /* The current section is named in the accent, not boxed: a filled pill in a
+       row of five reads as a button you have not pressed yet. */
+    .section.current {
+      color: var(--accent);
+    }
+
+    .section.current mat-icon {
+      opacity: 1;
+    }
+
+    .section mat-icon {
       font-size: 1.1rem;
       width: 1.1rem;
       height: 1.1rem;
+      opacity: 0.8;
     }
 
     .account mat-icon {

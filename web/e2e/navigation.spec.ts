@@ -26,7 +26,7 @@ test.describe('navigation', () => {
       await page.goto(`/${appId}/services`);
 
       for (const section of SECTIONS) {
-        await page.getByRole('tab', { name: section }).click();
+        await page.locator('nav.sections').getByRole('link', { name: section }).click();
 
         await expect(page).toHaveURL(new RegExp(`/${appId}/${section.toLowerCase()}\\b`));
       }
@@ -56,7 +56,7 @@ test.describe('navigation', () => {
     await expect(page).toHaveURL('/apps');
     await expect(page.getByRole('button', { name: 'All apps' })).toBeVisible();
 
-    await page.getByRole('tab', { name: 'Logs' }).click();
+    await page.locator('nav.sections').getByRole('link', { name: 'Logs' }).click();
     await expect(page).toHaveURL(/\/all\/logs/);
   });
 });
