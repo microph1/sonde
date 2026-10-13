@@ -275,7 +275,17 @@ export class VolumeChart {
     [...new Set(this.points().map((point) => point.bucket))].sort(),
   );
 
-  protected readonly series = computed<Series[]>(() => {
+  /**
+   * The lines, before they are given a shape.
+   *
+   * Split out from `series` so the scale can be taken from what is actually
+   * drawn. It used to be taken from the raw points, which miss the one line
+   * that is not a point: everything past the top few collapses into Other, and
+   * Other is their sum. With enough services that sum is several times the
+   * largest single series, so its line left the top of the plot — and the SVG
+   * paints outside its box, so it ran up the page and across the tiles.
+   */
+  private readonly lines = computed<Omit<Series, 'path' | 'labelY'>[]>(() => {
     const buckets = this.buckets();
 
     if (buckets.length === 0) {
@@ -326,9 +336,13 @@ export class VolumeChart {
       });
     }
 
+    return series;
+  });
+
+  protected readonly series = computed<Series[]>(() => {
     const max = this.max();
 
-    const placed = series.map((line) => ({
+    const placed = this.lines().map((line) => ({
       ...line,
       path: line.values
         .map((value, position) => `${position === 0 ? 'M' : 'L'}${this.x(position)},${this.y(value, max)}`)
@@ -339,16 +353,9 @@ export class VolumeChart {
     return dodge(placed);
   });
 
-  private readonly dataMax = computed(() => {
-    const perBucket = new Map<string, number>();
-
-    for (const point of this.points()) {
-      const key = `${point.bucket}|${point.series}`;
-      perBucket.set(key, (perBucket.get(key) ?? 0) + point.value);
-    }
-
-    return Math.max(1, ...perBucket.values());
-  });
+  private readonly dataMax = computed(() =>
+    Math.max(1, ...this.lines().flatMap((line) => line.values)),
+  );
 
   private readonly max = computed(() =>
     this.referenceFits() ? Math.max(this.dataMax(), this.reference() ?? 0) : this.dataMax(),
