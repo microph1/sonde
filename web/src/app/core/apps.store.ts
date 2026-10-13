@@ -68,6 +68,12 @@ export class AppsStore
     super({ apps: [], keys: [], issued: null });
   }
 
+  /** The list as it stands, for a caller that needs an answer now rather than
+   * a stream — resolving the URL scope cannot wait for an emission. */
+  snapshot(): AppsState {
+    return this._store$.getValue();
+  }
+
   @Effect()
   loadApps(): Observable<App[]> {
     return from(this.request<App[]>('GET', '/apps'));

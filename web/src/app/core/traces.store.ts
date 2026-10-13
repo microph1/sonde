@@ -3,6 +3,7 @@ import { Effect, Reduce, Store, makeStore } from '@microphi/store';
 import { EMPTY, Observable, bufferTime, filter, from, map, scan, startWith } from 'rxjs';
 
 import { API_BASE_URL } from './api-base-url';
+import { AppScope } from './app-scope';
 import { ndjsonRows, sseEvents } from './ndjson-stream';
 import { LogRecord, Span, TraceFilters, TraceRow } from './telemetry.model';
 
@@ -116,6 +117,8 @@ export class TracesStore
   implements makeStore<TracesState, TracesActions>
 {
   private readonly baseUrl = inject(API_BASE_URL);
+  /** Every query is of one app's telemetry; the scope says which. */
+  private readonly scope = inject(AppScope);
 
   readonly rows$ = this.select((state) => state.rows);
   readonly traces$ = this.select((state) => state.traces);
@@ -142,7 +145,7 @@ export class TracesStore
       fetch(`${this.baseUrl}/traces/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(filters),
+        body: JSON.stringify({ ...filters, app: this.scope.current }),
         credentials: 'include',
         signal,
       }),
@@ -165,7 +168,7 @@ export class TracesStore
    */
   @Effect()
   tail(filters: TraceFilters): Observable<TraceRow[]> {
-    return sseEvents<Span>(tailUrl(this.baseUrl, '/traces/tail', filters)).pipe(
+    return sseEvents<Span>(tailUrl(this.baseUrl, '/traces/tail', { ...filters, app: this.scope.current })).pipe(
       bufferTime(FLUSH_MS),
       filter((batch) => batch.length > 0),
       scan((rows: TraceRow[], batch) => fold(rows, batch), []),
@@ -222,7 +225,7 @@ export class TracesStore
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ traceId: query.traceId, from: query.from, limit: 500 }),
+        body: JSON.stringify({ traceId: query.traceId, from: query.from, limit: 500, app: this.scope.current }),
       })
         .then((response) => (response.ok ? response.text() : ''))
         .then((body) => ({

@@ -131,10 +131,12 @@ export class TracesEndpoint {
    */
   @Lambda({ method: 'GET', path: '/traces/tail' })
   public async tail(
+    @Path('app') app?: string,
     @Path('service') service?: string,
     @Path('status') status?: string,
   ): Promise<SseResult> {
     const params = {
+      app: app ?? '',
       service: service ?? '',
       status: status ?? '',
       limit: 500,
@@ -143,6 +145,7 @@ export class TracesEndpoint {
     const sql = `SELECT ${SPAN_COLUMNS}
                  FROM otel_traces
                  WHERE Timestamp > parseDateTime64BestEffort({since:String}, 9)
+                   AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
                    AND ({service:String} = '' OR ServiceName = {service:String})
                    AND ({status:String} = '' OR StatusCode = {status:String})
                  ORDER BY Timestamp ASC

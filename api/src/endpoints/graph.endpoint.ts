@@ -74,6 +74,7 @@ export class GraphEndpoint {
     const from = query.from ?? new Date(Date.parse(to) - 60 * 60 * 1000).toISOString();
     const group = groupingExpression(query.group);
     const params = {
+      app: query.app ?? '',
       from: assertTime(from, 'from'),
       to: assertTime(to, 'to'),
       lookback: PARENT_LOOKBACK_MINUTES,
@@ -87,6 +88,7 @@ export class GraphEndpoint {
          FROM otel_traces
          WHERE Timestamp >= parseDateTime64BestEffort({from:String}, 9)
            AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
+           AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
            AND ${group} != ''
          GROUP BY id
          ORDER BY spans DESC`,
@@ -107,6 +109,7 @@ export class GraphEndpoint {
            FROM otel_traces
            WHERE Timestamp >= parseDateTime64BestEffort({from:String}, 9)
              AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
+             AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
              AND ParentSpanId != ''
          ) AS child
          INNER JOIN (
@@ -114,6 +117,7 @@ export class GraphEndpoint {
            FROM otel_traces
            WHERE Timestamp >= parseDateTime64BestEffort({from:String}, 9) - INTERVAL {lookback:UInt32} MINUTE
              AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
+             AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
          ) AS parent
            ON child.TraceId = parent.TraceId AND child.ParentSpanId = parent.SpanId
          WHERE source != '' AND target != ''
@@ -135,6 +139,7 @@ export class GraphEndpoint {
            FROM otel_traces
            WHERE Timestamp >= parseDateTime64BestEffort({from:String}, 9)
              AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
+             AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
              AND ParentSpanId != ''
          ) AS child
          LEFT JOIN (
@@ -142,6 +147,7 @@ export class GraphEndpoint {
            FROM otel_traces
            WHERE Timestamp >= parseDateTime64BestEffort({from:String}, 9) - INTERVAL {lookback:UInt32} MINUTE
              AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
+             AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
          ) AS parent
            ON child.TraceId = parent.TraceId AND child.ParentSpanId = parent.SpanId
          WHERE parent.SpanId = '' AND target != ''

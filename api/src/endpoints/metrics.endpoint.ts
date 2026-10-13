@@ -112,8 +112,12 @@ const SERIES_LABEL = `
 `;
 
 /** Every overview query reads the same window. */
+/** The scope by itself, for a query with no time window to hang it on. */
+const APP_SCOPE = "({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})";
+
 const OVERVIEW_WINDOW = `
-  ({service:String} = '' OR ServiceName = {service:String})
+  ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
+  AND ({service:String} = '' OR ServiceName = {service:String})
   AND Timestamp >= parseDateTime64BestEffort({from:String}, 9)
   AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
 `;
@@ -217,7 +221,7 @@ export class MetricsEndpoint {
    */
   @Lambda({ method: 'GET', path: '/metrics' })
   public async catalogue(): Promise<MetricSummary[]> {
-    return this.listMetrics();
+    return this.listMetrics('');
   }
 
   /**
@@ -227,25 +231,26 @@ export class MetricsEndpoint {
    * event, so calling `this.catalogue()` from another endpoint reaches the
    * wrapper rather than the query and fails on a body that isn't there.
    */
-  private async listMetrics(): Promise<MetricSummary[]> {
+  private async listMetrics(app: string): Promise<MetricSummary[]> {
     return this.clickhouse.rows<MetricSummary>(
       `SELECT name, kind, unit, description, series, monotonic, limits FROM (
          SELECT MetricName AS name, 'gauge' AS kind, any(MetricUnit) AS unit,
                 any(MetricDescription) AS description, uniq(Attributes) AS series,
                 0 AS monotonic, ${CEILINGS} AS limits
-         FROM ${TABLES.gauge} GROUP BY name
+         FROM ${TABLES.gauge} WHERE ${APP_SCOPE} GROUP BY name
          UNION ALL
          SELECT MetricName AS name, 'sum' AS kind, any(MetricUnit) AS unit,
                 any(MetricDescription) AS description, uniq(Attributes) AS series,
                 toUInt8(any(IsMonotonic)) AS monotonic, ${CEILINGS} AS limits
-         FROM ${TABLES.sum} GROUP BY name
+         FROM ${TABLES.sum} WHERE ${APP_SCOPE} GROUP BY name
          UNION ALL
          SELECT MetricName AS name, 'histogram' AS kind, any(MetricUnit) AS unit,
                 any(MetricDescription) AS description, uniq(Attributes) AS series,
                 0 AS monotonic, ${CEILINGS} AS limits
-         FROM ${TABLES.histogram} GROUP BY name
+         FROM ${TABLES.histogram} WHERE ${APP_SCOPE} GROUP BY name
        )
        ORDER BY name`,
+      { app },
     );
   }
 
@@ -265,6 +270,7 @@ export class MetricsEndpoint {
     const to = query?.to ?? new Date().toISOString();
     const from = query?.from ?? new Date(Date.parse(to) - 24 * 60 * 60 * 1000).toISOString();
     const params = {
+      app: query?.app ?? '',
       service: query?.service ?? '',
       from: assertTime(from, 'from'),
       to: assertTime(to, 'to'),
@@ -272,7 +278,7 @@ export class MetricsEndpoint {
     };
 
     const [catalogue, gauges, sums, histograms] = await Promise.all([
-      this.listMetrics(),
+      this.listMetrics(params.app),
       this.clickhouse.rows<OverviewRow>(GAUGE_OVERVIEW_SQL, params),
       this.clickhouse.rows<OverviewRow>(SUM_OVERVIEW_SQL, params),
       this.clickhouse.rows<OverviewRow>(HISTOGRAM_OVERVIEW_SQL, params),
@@ -324,6 +330,7 @@ export class MetricsEndpoint {
     const from = query.from ?? new Date(Date.parse(to) - 6 * 60 * 60 * 1000).toISOString();
     const params = {
       name: query.name,
+      app: query.app ?? '',
       service: query.service ?? '',
       from: assertTime(from, 'from'),
       to: assertTime(to, 'to'),
@@ -343,6 +350,7 @@ export class MetricsEndpoint {
              ${aggregate} AS value
       FROM ${table}
       WHERE MetricName = {name:String}
+        AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
         AND ({service:String} = '' OR ServiceName = {service:String})
         AND Timestamp >= parseDateTime64BestEffort({from:String}, 9)
         AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)

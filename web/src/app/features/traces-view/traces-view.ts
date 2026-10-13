@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -11,8 +12,9 @@ import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { MatExpansionModule } from '@angular/material/expansion';
 import { PageHeader } from '../../shared/page-header';
 import { TraceDetail } from '../trace-detail/trace-detail';
-import { BehaviorSubject, map, startWith } from 'rxjs';
+import { BehaviorSubject, map, startWith, skip } from 'rxjs';
 
+import { AppScope } from '../../core/app-scope';
 import { TracesStore } from '../../core/traces.store';
 import { DEFAULT_RANGE, RANGES, Range } from '../../core/services.store';
 import { TraceFilters } from '../../core/telemetry.model';
@@ -226,6 +228,7 @@ import { DurationPipe } from '../../shared/duration-pipe';
 })
 export class TracesView implements OnInit {
   private readonly store = inject(TracesStore);
+  private readonly scope = inject(AppScope);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
 
@@ -265,6 +268,17 @@ export class TracesView implements OnInit {
   protected readonly rows$ = this.store.rows$;
   protected readonly live$ = this.store.live$;
   protected readonly searching$ = this.store.getLoadingFor('search').pipe(startWith(false));
+
+  constructor() {
+    // Switching app changes a path parameter, and Angular reuses the component
+    // rather than recreating it — so nothing would re-run on its own. skip(1)
+    // because the first emission is the scope this page just loaded under.
+    this.scope.app$
+      .pipe(skip(1), takeUntilDestroyed())
+      .subscribe(() => {
+        this.run();
+      });
+  }
 
   ngOnInit(): void {
     // A `live=1` query param opens straight into the tail, so a link can share

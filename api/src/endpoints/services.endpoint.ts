@@ -29,7 +29,7 @@ export class ServicesEndpoint {
    * streamed.
    */
   @Lambda({ method: 'GET', path: '/services' })
-  public async list(): Promise<ServiceSummary[]> {
+  public async list(@Path('app') app?: string): Promise<ServiceSummary[]> {
     return this.clickhouse.rows<ServiceSummary>(
       // All three signals, because a service that only exports metrics is not a
       // dead service. Counting traces and logs alone had musicbox-streamer
@@ -43,22 +43,23 @@ export class ServicesEndpoint {
               max(lastSeen) AS lastSeen
        FROM (
          SELECT ServiceName, count() AS traces, 0 AS logs, 0 AS metrics, max(Timestamp) AS lastSeen
-         FROM otel_traces GROUP BY ServiceName
+         FROM otel_traces WHERE ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String}) GROUP BY ServiceName
          UNION ALL
          SELECT ServiceName, 0 AS traces, count() AS logs, 0 AS metrics, max(Timestamp) AS lastSeen
-         FROM otel_logs GROUP BY ServiceName
+         FROM otel_logs WHERE ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String}) GROUP BY ServiceName
          UNION ALL
          SELECT ServiceName, 0 AS traces, 0 AS logs, count() AS metrics, max(Timestamp) AS lastSeen
-         FROM otel_metrics_gauge GROUP BY ServiceName
+         FROM otel_metrics_gauge WHERE ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String}) GROUP BY ServiceName
          UNION ALL
          SELECT ServiceName, 0 AS traces, 0 AS logs, count() AS metrics, max(Timestamp) AS lastSeen
-         FROM otel_metrics_sum GROUP BY ServiceName
+         FROM otel_metrics_sum WHERE ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String}) GROUP BY ServiceName
          UNION ALL
          SELECT ServiceName, 0 AS traces, 0 AS logs, count() AS metrics, max(Timestamp) AS lastSeen
-         FROM otel_metrics_histogram GROUP BY ServiceName
+         FROM otel_metrics_histogram WHERE ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String}) GROUP BY ServiceName
        )
        GROUP BY ServiceName
        ORDER BY lastSeen DESC`,
+      { app: app ?? '' },
     );
   }
 
@@ -74,6 +75,7 @@ export class ServicesEndpoint {
     @Path('windowMinutes') windowMinutes?: string,
     @Path('bucketSeconds') bucketSeconds?: string,
     @Path('group') group?: string,
+    @Path('app') app?: string,
   ): Promise<VolumePoint[]> {
     const window = clamp(Number(windowMinutes ?? 360), 5, 7 * 24 * 60);
     const bucket = clamp(Number(bucketSeconds ?? 300), 10, 3600);
@@ -90,6 +92,7 @@ export class ServicesEndpoint {
                 countIf(StatusCode = 'Error') AS errors
          FROM otel_traces
          WHERE Timestamp >= now() - INTERVAL {window:UInt32} MINUTE
+           AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
          GROUP BY bucket, name
          UNION ALL
          SELECT toStartOfInterval(Timestamp, INTERVAL {bucket:UInt32} SECOND) AS bucket,
@@ -97,6 +100,7 @@ export class ServicesEndpoint {
                 countIf(SeverityNumber >= 17) AS errors
          FROM otel_logs
          WHERE Timestamp >= now() - INTERVAL {window:UInt32} MINUTE
+           AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
          GROUP BY bucket, name
        )
        -- A resource that never set the attribute groups under one honest label
@@ -104,7 +108,7 @@ export class ServicesEndpoint {
        WHERE name != ''
        GROUP BY bucket, name
        ORDER BY bucket ASC`,
-      { window, bucket },
+      { window, bucket, app: app ?? '' },
     );
   }
 

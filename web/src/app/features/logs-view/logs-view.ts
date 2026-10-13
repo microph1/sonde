@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -9,8 +10,9 @@ import { AsyncPipe, DatePipe } from '@angular/common';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { PageHeader } from '../../shared/page-header';
-import { BehaviorSubject, startWith } from 'rxjs';
+import { BehaviorSubject, startWith, skip } from 'rxjs';
 
+import { AppScope } from '../../core/app-scope';
 import { LogsStore } from '../../core/logs.store';
 import { DEFAULT_RANGE, RANGES, Range } from '../../core/services.store';
 import { LogFilters, LogRecord } from '../../core/telemetry.model';
@@ -333,6 +335,7 @@ const SUMMARY_CHARS = 70;
 })
 export class LogsView implements OnInit {
   private readonly store = inject(LogsStore);
+  private readonly scope = inject(AppScope);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
 
@@ -364,6 +367,17 @@ export class LogsView implements OnInit {
   protected readonly rows$ = this.store.rows$;
   protected readonly live$ = this.store.live$;
   protected readonly searching$ = this.store.getLoadingFor('search').pipe(startWith(false));
+
+  constructor() {
+    // Switching app changes a path parameter, and Angular reuses the component
+    // rather than recreating it — so nothing would re-run on its own. skip(1)
+    // because the first emission is the scope this page just loaded under.
+    this.scope.app$
+      .pipe(skip(1), takeUntilDestroyed())
+      .subscribe(() => {
+        this.run();
+      });
+  }
 
   ngOnInit(): void {
     // A `live=1` query param opens straight into the tail, so a link can share

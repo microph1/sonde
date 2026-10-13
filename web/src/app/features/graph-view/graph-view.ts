@@ -1,12 +1,14 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AsyncPipe, DecimalPipe } from '@angular/common';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Router, RouterLink } from '@angular/router';
-import { map } from 'rxjs';
+import { map, skip } from 'rxjs';
 
+import { AppScope } from '../../core/app-scope';
 import { GraphEdge, GraphStore, ServiceGraph } from '../../core/graph.store';
 import { RANGES, Range } from '../../core/services.store';
 import { PageHeader } from '../../shared/page-header';
@@ -286,6 +288,7 @@ const ERROR_THRESHOLD = 0.01;
 })
 export class GraphView implements OnInit {
   private readonly store = inject(GraphStore);
+  private readonly scope = inject(AppScope);
   private readonly router = inject(Router);
 
   protected readonly ranges = RANGES;
@@ -302,6 +305,17 @@ export class GraphView implements OnInit {
   protected readonly range$ = this.store.range$;
   protected readonly group$ = this.store.group$;
   protected readonly layout$ = this.store.graph$.pipe(map((graph) => layout(graph)));
+
+  constructor() {
+    // Switching app changes a path parameter, and Angular reuses the component
+    // rather than recreating it — so nothing would re-run on its own. skip(1)
+    // because the first emission is the scope this page just loaded under.
+    this.scope.app$
+      .pipe(skip(1), takeUntilDestroyed())
+      .subscribe(() => {
+        this.store.dispatch('load');
+      });
+  }
 
   ngOnInit(): void {
     this.store.dispatch('load');

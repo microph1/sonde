@@ -5,8 +5,9 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { combineLatest, filter, map, startWith, withLatestFrom } from 'rxjs';
+import { combineLatest, filter, map, startWith, withLatestFrom, skip } from 'rxjs';
 
+import { AppScope } from '../../core/app-scope';
 import { DEFAULT_RANGE, RANGES, Range, ServicesStore } from '../../core/services.store';
 import { PageHeader } from '../../shared/page-header';
 import { VolumeChart } from '../../shared/volume-chart';
@@ -187,6 +188,7 @@ import { VolumeChart } from '../../shared/volume-chart';
 })
 export class ServicesView implements OnInit {
   private readonly store = inject(ServicesStore);
+  private readonly scope = inject(AppScope);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
 
@@ -306,6 +308,16 @@ export class ServicesView implements OnInit {
         takeUntilDestroyed(),
       )
       .subscribe((range) => this.store.dispatch('selectRange', range));
+
+    // Switching app changes a path parameter, and Angular reuses the component
+    // rather than recreating it — so nothing would re-run on its own. skip(1)
+    // because the first emission is the scope this page just loaded under.
+    this.scope.app$
+      .pipe(skip(1), withLatestFrom(this.range$, this.grouping$), takeUntilDestroyed())
+      .subscribe(([, range, grouping]) => {
+        this.store.dispatch('loadServices');
+        this.store.dispatch('loadVolume', { range, grouping });
+      });
   }
 
   ngOnInit(): void {

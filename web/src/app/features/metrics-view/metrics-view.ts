@@ -1,11 +1,13 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AsyncPipe } from '@angular/common';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatRippleModule } from '@angular/material/core';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { combineLatest, map, startWith } from 'rxjs';
+import { combineLatest, map, startWith, skip } from 'rxjs';
 
+import { AppScope } from '../../core/app-scope';
 import { Member, MetricOverview, MetricSummary, MetricsStore } from '../../core/metrics.store';
 import { RANGES, Range } from '../../core/services.store';
 import { PageHeader } from '../../shared/page-header';
@@ -397,6 +399,7 @@ function share(value: number, of: number): string {
 })
 export class MetricsView implements OnInit {
   private readonly store = inject(MetricsStore);
+  private readonly scope = inject(AppScope);
 
   protected readonly ranges = RANGES;
   protected readonly overview$ = this.store.overview$;
@@ -465,6 +468,17 @@ export class MetricsView implements OnInit {
   protected readonly reference$ = this.store.reference$;
   protected readonly rangeLabel$ = this.store.range$.pipe(map((range) => range.label));
   protected readonly selectedName$ = this.store.selected$.pipe(map((metric) => metric?.name ?? ''));
+
+  constructor() {
+    // Switching app changes a path parameter, and Angular reuses the component
+    // rather than recreating it — so nothing would re-run on its own. skip(1)
+    // because the first emission is the scope this page just loaded under.
+    this.scope.app$
+      .pipe(skip(1), takeUntilDestroyed())
+      .subscribe(() => {
+        this.store.dispatch('loadCatalogue');
+      });
+  }
 
   ngOnInit(): void {
     this.store.dispatch('loadCatalogue');

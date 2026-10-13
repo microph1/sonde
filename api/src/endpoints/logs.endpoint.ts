@@ -70,12 +70,14 @@ export class LogsEndpoint {
    */
   @Lambda({ method: 'GET', path: '/logs/tail' })
   public async tail(
+    @Path('app') app?: string,
     @Path('service') service?: string,
     @Path('minSeverity') minSeverity?: string,
     @Path('contains') contains?: string,
     @Path('scope') scope?: string,
   ): Promise<SseResult> {
     const params = {
+      app: app ?? '',
       service: service ?? '',
       minSeverity: Math.max(0, Math.floor(Number(minSeverity ?? 0)) || 0),
       contains: contains ?? '',
@@ -87,6 +89,7 @@ export class LogsEndpoint {
                         TraceId, SpanId, ScopeName, LogAttributes, ResourceAttributes
                  FROM otel_logs
                  WHERE Timestamp > parseDateTime64BestEffort({since:String}, 9)
+                   AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
                    AND ({service:String} = '' OR ServiceName = {service:String})
                    AND SeverityNumber >= {minSeverity:Int32}
                    AND ({contains:String} = '' OR positionCaseInsensitive(Body, {contains:String}) > 0)

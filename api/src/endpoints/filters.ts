@@ -3,6 +3,15 @@ import type { QueryParams } from '../clickhouse/clickhouse.service';
 /** What every search accepts. Absent fields fall back to a bounded default so
  * no query can accidentally scan the whole retention window. */
 export interface SearchFilters {
+  /**
+   * The app whose telemetry to show, by the name the receiver stamped.
+   *
+   * `sonde.app` is written from the ingest key rather than taken from the
+   * exporter, so unlike `service` it cannot be self-declared — which is what
+   * makes it worth scoping a whole console to. Empty means every app, which is
+   * also what telemetry ingested with auth off has.
+   */
+  readonly app?: string;
   readonly service?: string;
   readonly from?: string;
   readonly to?: string;
@@ -24,6 +33,7 @@ export function baseParams(filters: SearchFilters, maxLimit: number): QueryParam
   const from = filters.from ?? new Date(Date.parse(to) - DEFAULT_WINDOW_MS).toISOString();
 
   return {
+    app: filters.app ?? '',
     service: filters.service ?? '',
     from: assertTime(from, 'from'),
     to: assertTime(to, 'to'),
@@ -53,9 +63,10 @@ export function assertTime(value: string, field: string): string {
   return value;
 }
 
-/** Shared by every signal: an optional service and a mandatory time window. */
+/** Shared by every signal: an optional app and service, and a mandatory time window. */
 export const WINDOW_SQL = `
-  ({service:String} = '' OR ServiceName = {service:String})
+  ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
+  AND ({service:String} = '' OR ServiceName = {service:String})
   AND Timestamp >= parseDateTime64BestEffort({from:String}, 9)
   AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
 `;
@@ -73,7 +84,8 @@ export const WINDOW_SQL = `
  * primary key still do their work; the second term only widens the lower bound.
  */
 export const SPAN_WINDOW_SQL = `
-  ({service:String} = '' OR ServiceName = {service:String})
+  ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
+  AND ({service:String} = '' OR ServiceName = {service:String})
   AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
   AND Timestamp + toIntervalNanosecond(Duration) >= parseDateTime64BestEffort({from:String}, 9)
 `;

@@ -3,6 +3,7 @@ import { Effect, Reduce, Store, makeStore } from '@microphi/store';
 import { EMPTY, Observable, combineLatest, from, map, of, skip } from 'rxjs';
 
 import { API_BASE_URL } from './api-base-url';
+import { AppScope } from './app-scope';
 import { RANGES, Range } from './services.store';
 import { SeriesPoint } from './telemetry.model';
 
@@ -100,6 +101,8 @@ export class MetricsStore
   implements makeStore<MetricsState, MetricsActions>
 {
   private readonly baseUrl = inject(API_BASE_URL);
+  /** Every query is of one app's telemetry; the scope says which. */
+  private readonly scope = inject(AppScope);
 
   readonly catalogue$ = this.select((state) => state.catalogue);
   readonly overview$ = this.select((state) => state.overview);
@@ -337,7 +340,9 @@ export class MetricsStore
       method,
       credentials: 'include',
       headers: body ? { 'Content-Type': 'application/json' } : {},
-      body: body ? JSON.stringify(body) : undefined,
+      // The scope rides on every body rather than on each call site, so a
+      // new query cannot forget it.
+      body: body ? JSON.stringify({ ...(body as object), app: this.scope.current }) : undefined,
     });
 
     if (!response.ok) {

@@ -3,6 +3,7 @@ import { Effect, Reduce, Store, makeStore } from '@microphi/store';
 import { Observable, from, of } from 'rxjs';
 
 import { API_BASE_URL } from './api-base-url';
+import { AppScope } from './app-scope';
 import { DEFAULT_RANGE, Range } from './services.store';
 
 export interface GraphNode {
@@ -48,6 +49,8 @@ export class GraphStore
   implements makeStore<GraphState, GraphActions>
 {
   private readonly baseUrl = inject(API_BASE_URL);
+  /** Every query is of one app's telemetry; the scope says which. */
+  private readonly scope = inject(AppScope);
 
   readonly graph$ = this.select((state) => state.graph);
   readonly range$ = this.select((state) => state.range);
@@ -63,6 +66,7 @@ export class GraphStore
 
     return from(
       this.request<ServiceGraph>({
+        app: this.scope.current,
         from: new Date(Date.now() - range.windowMinutes * 60_000).toISOString(),
         group,
       }),

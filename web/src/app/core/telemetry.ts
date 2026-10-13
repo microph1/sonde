@@ -1,6 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 
 import { API_BASE_URL } from './api-base-url';
+import { AppScope } from './app-scope';
 import { ServiceSummary, VolumePoint } from './telemetry.model';
 
 /**
@@ -13,6 +14,7 @@ import { ServiceSummary, VolumePoint } from './telemetry.model';
 @Injectable({ providedIn: 'root' })
 export class Telemetry {
   private readonly baseUrl = inject(API_BASE_URL);
+  private readonly scope = inject(AppScope);
 
   async services(): Promise<ServiceSummary[]> {
     return this.get<ServiceSummary[]>('/services');
@@ -34,8 +36,12 @@ export class Telemetry {
     return this.get<{ key: string; label: string }[]>('/groupings');
   }
 
+  /** Every read is of one app's telemetry, so the scope is appended here rather
+   * than at each call site, where a new endpoint would be able to forget it. */
   private async get<T>(path: string): Promise<T> {
-    const response = await fetch(`${this.baseUrl}${path}`, { credentials: 'include' });
+    const separator = path.includes('?') ? '&' : '?';
+    const scoped = `${path}${separator}app=${encodeURIComponent(this.scope.current)}`;
+    const response = await fetch(`${this.baseUrl}${scoped}`, { credentials: 'include' });
 
     if (!response.ok) {
       throw new Error(`${path} failed with ${response.status}`);
