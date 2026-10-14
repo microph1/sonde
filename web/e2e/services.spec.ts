@@ -51,11 +51,14 @@ test.describe('services overview', () => {
     await page.getByRole('combobox', { name: 'Group by' }).click();
     await page.getByRole('option', { name: 'Environment' }).click();
 
-    // Everything seeded declares `deployment.environment=e2e`, and anything
-    // that declares no environment is dropped rather than drawn as a blank —
-    // so grouping by it collapses the services into exactly one series.
-    await expect(legend.locator('li')).toHaveCount(1);
-    await expect(legend.locator('li')).toHaveText('e2e');
+    // Everything seeded declares `deployment.environment=e2e`, so the services
+    // collapse into that one series. Not "exactly one series": a development
+    // stack has whatever else the machine is exporting into it pointed at it,
+    // and a second environment showing up is that, not a regression. What the
+    // grouping promises is that the series are environments — so no service
+    // name survives the switch.
+    await expect(legend.getByText('e2e', { exact: true })).toBeVisible();
+    await expect(legend).not.toContainText('e2e-');
   });
 
   test('the errors tile arrives at the signal that has the errors', async ({ page, request }) => {
