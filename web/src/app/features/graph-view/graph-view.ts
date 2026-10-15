@@ -4,9 +4,11 @@ import { AsyncPipe, DecimalPipe } from '@angular/common';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
+import { MatButtonModule } from '@angular/material/button';
+import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Router, RouterLink } from '@angular/router';
-import { map, skip } from 'rxjs';
+import { BehaviorSubject, map, skip } from 'rxjs';
 
 import { AppScope } from '../../core/app-scope';
 import { GraphEdge, GraphStore, ServiceGraph } from '../../core/graph.store';
@@ -36,9 +38,50 @@ interface PlacedEdge {
 interface Layout {
   readonly nodes: PlacedNode[];
   readonly edges: PlacedEdge[];
-  readonly width: number;
-  readonly height: number;
+  /** Sized to what is drawn, not to the grid it was placed on. See [`frame`]. */
+  readonly viewBox: string;
 }
+
+/** How the map is being looked at: a translation in the svg's own units and a
+ * scale about the origin, applied in that order. */
+interface View {
+  readonly x: number;
+  readonly y: number;
+  readonly scale: number;
+}
+
+const HOME: View = { x: 0, y: 0, scale: 1 };
+const MIN_SCALE = 0.4;
+const MAX_SCALE = 8;
+/** Pointer travel, in client pixels, past which letting go is the end of a drag
+ * rather than a click. */
+const DRAG_SLOP = 5;
+
+/** Where an event happened, in the coordinates the transform is applied in.
+ * `getScreenCTM` rather than arithmetic on the bounding box, because it already
+ * accounts for the viewBox fit, the page zoom and any transformed ancestor. */
+function toUserSpace(event: { clientX: number; clientY: number }, svg: SVGSVGElement) {
+  const ctm = svg.getScreenCTM();
+
+  if (!ctm) {
+    return null;
+  }
+
+  const point = svg.createSVGPoint();
+
+  point.x = event.clientX;
+  point.y = event.clientY;
+
+  return point.matrixTransform(ctm.inverse());
+}
+
+/** Advance width of the 12px monospace a node label is set in, and how far its
+ * baseline sits below the circle. */
+const LABEL_ADVANCE = 7.2;
+const LABEL_DROP = 20;
+/** How far the entry marker reaches to the left of the node it points at. */
+const ENTRY_REACH = 35;
+const FRAME_PAD = 8;
 
 const COLUMN = 260;
 const ROW = 110;
@@ -59,6 +102,8 @@ const ERROR_THRESHOLD = 0.01;
     MatFormFieldModule,
     MatSelectModule,
     MatTooltipModule,
+    MatButtonModule,
+    MatIconModule,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -86,9 +131,17 @@ const ERROR_THRESHOLD = 0.01;
 
     @if (layout$ | async; as layout) {
       @if (layout.nodes.length) {
-        <figure class="map">
-          <svg [attr.viewBox]="'0 0 ' + layout.width + ' ' + layout.height" role="img"
-               [attr.aria-label]="describe(layout)">
+        <figure class="map" [class.panning]="panning">
+          <!-- The gestures belong to the drawing, not to the card. On the card
+               they also caught the zoom buttons, and a pointer capture taken on
+               the way down meant the button never saw its own click. -->
+          <svg #svg [attr.viewBox]="layout.viewBox" role="img"
+               [attr.aria-label]="describe(layout)"
+               (wheel)="zoom($event, $any(svg))"
+               (pointerdown)="grab($event)"
+               (pointermove)="drag($event, $any(svg))"
+               (pointerup)="release()"
+               (pointercancel)="release()">
             <defs>
               <!-- userSpaceOnUse: a marker scales with the stroke by default, so
                    the busiest edge - the one drawn thickest - also grew the
@@ -107,6 +160,12 @@ const ERROR_THRESHOLD = 0.01;
                 <path d="M0 0 L10 5 L0 10 z" class="arrow" />
               </marker>
             </defs>
+
+            <!-- Everything drawn rides one transform. The viewBox stays the
+                 layout's own size, so the arrowhead marker and the stroke
+                 widths keep their meaning; zooming moves the content inside the
+                 frame rather than redefining what a unit is. -->
+            <g [attr.transform]="transform$ | async">
 
             @for (placed of layout.edges; track placed.edge.source + '>' + placed.edge.target) {
               <path
@@ -142,7 +201,25 @@ const ERROR_THRESHOLD = 0.01;
                 <text class="label" [attr.y]="node.r + 16">{{ node.id }}</text>
               </g>
             }
+
+            </g>
           </svg>
+
+          <!-- The wheel and the drag are not discoverable, and neither is
+               reachable from the keyboard. These are. -->
+          <div class="controls fx-flex fx-gap-1">
+            <button mat-icon-button type="button" aria-label="Zoom in" matTooltip="Zoom in" (click)="step(1.3, $any(svg))">
+              <mat-icon>add</mat-icon>
+            </button>
+            <button mat-icon-button type="button" aria-label="Zoom out" matTooltip="Zoom out" (click)="step(1 / 1.3, $any(svg))">
+              <mat-icon>remove</mat-icon>
+            </button>
+            @if ((moved$ | async) === true) {
+              <button mat-icon-button type="button" aria-label="Fit the map to the frame" matTooltip="Fit" (click)="reset()">
+                <mat-icon>fit_screen</mat-icon>
+              </button>
+            }
+          </div>
         </figure>
 
         <!-- The table is the chart's twin, not a fallback: it carries the
@@ -202,18 +279,42 @@ const ERROR_THRESHOLD = 0.01;
   `,
   styles: `
     .map {
+      position: relative;
       margin: 0 0 var(--fx-m);
       padding: var(--fx-s);
       border: 1px solid var(--line);
       border-radius: var(--mat-sys-corner-medium);
       background: var(--surface);
-      overflow-x: auto;
+      /* Hidden rather than auto: the content moves under a fixed frame now, and
+         a scrollbar that appears when you drag is the old behaviour fighting
+         the new one. */
+      overflow: hidden;
+      cursor: grab;
+      /* Otherwise a touch drag scrolls the page instead of the map. */
+      touch-action: none;
+    }
+
+    .map.panning {
+      cursor: grabbing;
+    }
+
+    .controls {
+      position: absolute;
+      inset-block-start: var(--fx-2xs);
+      inset-inline-end: var(--fx-2xs);
+      opacity: 0.55;
+      transition: opacity 120ms ease;
+    }
+
+    .map:hover .controls,
+    .controls:focus-within {
+      opacity: 1;
     }
 
     svg {
+      display: block;
       width: 100%;
       height: auto;
-      overflow: visible;
     }
 
     .edge {
@@ -269,7 +370,7 @@ const ERROR_THRESHOLD = 0.01;
       fill: var(--text);
       font-size: 12px;
       text-anchor: middle;
-      font-family: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+      font-family: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
     }
 
     .num {
@@ -306,6 +407,33 @@ export class GraphView implements OnInit {
   protected readonly group$ = this.store.group$;
   protected readonly layout$ = this.store.graph$.pipe(map((graph) => layout(graph)));
 
+  /**
+   * Where the map is being looked at from.
+   *
+   * View state, so it lives here rather than in the store: it is not a fact
+   * about the system, nothing else reads it, and it should not survive a
+   * reload. The layout is laid out once at a fixed size and this moves over it.
+   */
+  private readonly view$$ = new BehaviorSubject<View>(HOME);
+
+  protected readonly transform$ = this.view$$.pipe(
+    map((view) => `translate(${view.x} ${view.y}) scale(${view.scale})`),
+  );
+
+  /** Whether there is anything to go back from, which is what decides if the
+   * fit button is worth the space. */
+  protected readonly moved$ = this.view$$.pipe(
+    map((view) => view.scale !== HOME.scale || view.x !== HOME.x || view.y !== HOME.y),
+  );
+
+  /** Set while a drag is in progress, read by the template for the cursor. */
+  protected panning = false;
+
+  /** Where the pointer went down, and whether it has travelled far enough to be
+   * a drag rather than a click on a node. */
+  private from: { x: number; y: number } | null = null;
+  private travelled = 0;
+
   constructor() {
     // Switching app changes a path parameter, and Angular reuses the component
     // rather than recreating it — so nothing would re-run on its own. skip(1)
@@ -332,7 +460,113 @@ export class GraphView implements OnInit {
   }
 
   protected openTraces(service: string): void {
+    // A drag that ends over a node still fires a click. Opening a page because
+    // someone let go of the mouse in the wrong place is the kind of thing that
+    // makes a map feel broken rather than draggable.
+    if (this.travelled > DRAG_SLOP) {
+      return;
+    }
+
     this.router.navigate(this.scope.link('traces'), { queryParams: { service } });
+  }
+
+  /**
+   * Zoom about the pointer, so the thing under the cursor stays under it.
+   *
+   * Zooming about the centre is what makes a map feel like it is fighting you:
+   * you point at the node you want a closer look at and it slides away.
+   */
+  protected zoom(event: WheelEvent, svg: SVGSVGElement): void {
+    event.preventDefault();
+
+    const at = toUserSpace(event, svg);
+
+    if (!at) {
+      return;
+    }
+
+    // Exponential in the delta, so a trackpad's many small events and a
+    // mouse wheel's few large ones travel the same distance per gesture.
+    this.scaleAbout(at, Math.exp(-event.deltaY / 400));
+  }
+
+  /** The buttons, which zoom about the middle of the frame because there is no
+   * pointer to zoom about. */
+  protected step(by: number, svg: SVGSVGElement): void {
+    const box = svg.viewBox.baseVal;
+
+    this.scaleAbout({ x: box.x + box.width / 2, y: box.y + box.height / 2 }, by);
+  }
+
+  protected grab(event: PointerEvent): void {
+    this.panning = true;
+    this.travelled = 0;
+    this.from = { x: event.clientX, y: event.clientY };
+  }
+
+  protected drag(event: PointerEvent, svg: SVGSVGElement): void {
+    if (!this.from) {
+      return;
+    }
+
+    const perPixel = svg.getScreenCTM()?.a;
+
+    if (!perPixel) {
+      return;
+    }
+
+    const dx = event.clientX - this.from.x;
+    const dy = event.clientY - this.from.y;
+
+    const before = this.travelled;
+
+    this.travelled += Math.abs(dx) + Math.abs(dy);
+    this.from = { x: event.clientX, y: event.clientY };
+
+    // Captured only once this is a drag, never on the way down. Capturing on
+    // pointerdown retargets the pointer stream to the svg, and with it the
+    // click the browser would otherwise dispatch on what was pressed — so
+    // every node stopped opening its traces, and so did the zoom buttons.
+    if (before <= DRAG_SLOP && this.travelled > DRAG_SLOP) {
+      svg.setPointerCapture(event.pointerId);
+    }
+
+    const view = this.view$$.value;
+
+    this.view$$.next({ ...view, x: view.x + dx / perPixel, y: view.y + dy / perPixel });
+  }
+
+  protected release(): void {
+    this.panning = false;
+    this.from = null;
+  }
+
+  protected reset(): void {
+    this.view$$.next(HOME);
+  }
+
+  /**
+   * Scale by `by`, keeping the content under `at` where it is.
+   *
+   * `at` is in the svg's own coordinates, which is the space the transform is
+   * applied in — so the content point under it is `(at - translate) / scale`,
+   * and holding it still is a matter of solving for the new translate.
+   */
+  private scaleAbout(at: { x: number; y: number }, by: number): void {
+    const view = this.view$$.value;
+    const scale = Math.min(Math.max(view.scale * by, MIN_SCALE), MAX_SCALE);
+
+    if (scale === view.scale) {
+      return;
+    }
+
+    const ratio = scale / view.scale;
+
+    this.view$$.next({
+      scale,
+      x: at.x - (at.x - view.x) * ratio,
+      y: at.y - (at.y - view.y) * ratio,
+    });
   }
 
   protected tooltip(node: PlacedNode): string {
@@ -474,10 +708,57 @@ function layout(graph: ServiceGraph): Layout {
     })
     .filter((edge): edge is PlacedEdge => edge !== null);
 
-  return {
-    nodes: [...placed.values()],
-    edges,
-    width: MARGIN.x * 2 + Math.max(columns.size - 1, 0) * COLUMN,
-    height: MARGIN.y * 2 + Math.max(tallest - 1, 0) * ROW,
-  };
+  const nodes = [...placed.values()];
+  const looping = new Set(
+    edges.filter((placed) => placed.edge.source === placed.edge.target).map((placed) => placed.edge.source),
+  );
+
+  return { nodes, edges, viewBox: frame(nodes, looping) };
+}
+
+/**
+ * The box that holds everything drawn.
+ *
+ * Taken from the drawing rather than from the grid it was laid out on. The
+ * grid's margins were a guess at how far past a node its decorations reach, and
+ * the guess was wrong for a busy service that calls itself: its loop rises with
+ * its radius, and on the top row the loop and its label went above the frame.
+ * That was invisible while the svg was allowed to overflow — the arc simply
+ * drew outside the card — and became a clipped arc the moment the map could
+ * pan, which is the honest rendering of a frame that was always too small.
+ */
+function frame(nodes: PlacedNode[], looping: ReadonlySet<string>): string {
+  if (nodes.length === 0) {
+    return '0 0 1 1';
+  }
+
+  const lefts: number[] = [];
+  const rights: number[] = [];
+  const tops: number[] = [];
+  const bottoms: number[] = [];
+
+  for (const node of nodes) {
+    // The label is centred under the node and is the widest thing about a small
+    // one. Monospace, so its width is countable rather than measurable.
+    const half = Math.max(node.r, (node.id.length * LABEL_ADVANCE) / 2);
+
+    lefts.push(node.x - half, node.x - node.r - (node.entry ? ENTRY_REACH : 0));
+    rights.push(node.x + half);
+    tops.push(node.y - node.r);
+    bottoms.push(node.y + node.r + LABEL_DROP);
+
+    if (looping.has(node.id)) {
+      const loop = node.r + 18;
+
+      // The apex of the loop's cubic, and the label above it.
+      tops.push(node.y - 0.2 * node.r - 1.5 * loop, node.y - loop - 25);
+      lefts.push(node.x - loop);
+      rights.push(node.x + loop);
+    }
+  }
+
+  const x = Math.min(...lefts) - FRAME_PAD;
+  const y = Math.min(...tops) - FRAME_PAD;
+
+  return `${x} ${y} ${Math.max(...rights) + FRAME_PAD - x} ${Math.max(...bottoms) + FRAME_PAD - y}`;
 }

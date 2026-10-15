@@ -20,6 +20,96 @@ export interface SeededTrace {
 }
 
 /**
+ * One call from one service to another: a parent span in `from` and its child
+ * in `to`, sharing a trace.
+ *
+ * That pair is the whole of what the map is built from — an edge is a parent
+ * and a child that landed in different services — so seeding it is seeding an
+ * edge. `seedTrace` cannot: both of its spans carry the same resource.
+ */
+export async function seedCall(
+  request: APIRequestContext,
+  from: string,
+  to: string,
+): Promise<SeededTrace> {
+  const traceId = hex(32);
+  const rootSpanId = hex(16);
+  const childSpanId = hex(16);
+  const now = Date.now() * 1_000_000;
+
+  const span = (service: string, id: string, parent: string | undefined, kind: number) => ({
+    resource: {
+      attributes: [
+        { key: 'service.name', value: { stringValue: service } },
+        { key: 'deployment.environment', value: { stringValue: 'e2e' } },
+      ],
+    },
+    scopeSpans: [
+      {
+        spans: [
+          {
+            traceId,
+            spanId: id,
+            ...(parent ? { parentSpanId: parent } : {}),
+            name: `${service} work`,
+            kind,
+            startTimeUnixNano: `${now}`,
+            endTimeUnixNano: `${now + 12_000_000}`,
+            status: { code: 1 },
+          },
+        ],
+      },
+    ],
+  });
+
+  const posted = await request.post(`${OTLP}/v1/traces`, {
+    data: {
+      resourceSpans: [
+        span(from, rootSpanId, undefined, 3),
+        span(to, childSpanId, rootSpanId, 2),
+      ],
+    },
+  });
+  expect(posted.ok(), 'the receiver should accept the call').toBeTruthy();
+
+  await waitForTrace(request, traceId);
+  await waitForEdge(request, from, to);
+
+  return { traceId, rootSpanId, childSpanId };
+}
+
+/**
+ * Polls until the map can see the call.
+ *
+ * Waiting for the trace is not enough: it returns as soon as one span is
+ * queryable, and the edge is a join that needs both halves. The node appeared
+ * on the map while the edge it belonged to did not — which looks exactly like
+ * a broken query and is really a test that asked too early.
+ */
+export async function waitForEdge(
+  request: APIRequestContext,
+  from: string,
+  to: string,
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const response = await request.post(`${API}/api/services/graph`, {
+          data: { from: new Date(Date.now() - 60 * 60_000).toISOString() },
+        });
+
+        expect(response.ok(), 'the read API should answer the seeding poll').toBeTruthy();
+
+        const graph = (await response.json()) as { edges: { source: string; target: string }[] };
+
+        return graph.edges.some((edge) => edge.source === from && edge.target === to);
+      },
+      { message: `the call ${from} → ${to} never reached the map`, timeout: 30_000, intervals: [500] },
+    )
+    .toBe(true);
+}
+
+/**
  * Posts a gauge and waits for it to be listed.
  *
  * Metrics have no trace to follow them by, so the wait is on the instrument
