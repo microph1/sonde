@@ -143,6 +143,58 @@ test.describe('traces', () => {
     });
   });
 
+  test('a span opens to show what it actually did', async ({ page, request }) => {
+    const service = uniqueService('attrs');
+
+    await seedTrace(request, service, {
+      name: 'GET /albums/:id',
+      attributes: {
+        'http.request.method': 'GET',
+        'url.full': 'https://api.example/albums/42',
+        'http.response.status_code': '200',
+        // No convention covers this one, and it is often the one that answers
+        // the question — so the table has to carry it too.
+        'musicbox.album.id': '42',
+      },
+    });
+
+    await page.goto(`/all/traces?service=${service}`);
+    await page.getByRole('button', { name: /GET \/albums/ }).click();
+
+    const span = page.locator('.waterfall li').first();
+
+    await span.locator('.label').click();
+
+    await expect(span.locator('.summary')).toHaveText('GET https://api.example/albums/42 → 200');
+    await expect(span.locator('.fields')).toContainText('musicbox.album.id');
+  });
+
+  test('a span with the older http conventions still summarises', async ({ page, request }) => {
+    const service = uniqueService('oldconv');
+
+    // Both generations are in real data — this console reads from whatever is
+    // instrumented, not from one version of the spec — so reading only the
+    // current spelling leaves a quarter of the HTTP spans with a blank line.
+    await seedTrace(request, service, {
+      name: 'HTTP GET',
+      attributes: {
+        'http.method': 'GET',
+        'http.scheme': 'https',
+        'http.host': 'api.example',
+        'http.target': '/albums/42',
+        'http.status_code': '500',
+      },
+    });
+
+    await page.goto(`/all/traces?service=${service}`);
+    await page.getByRole('button', { name: /HTTP GET/ }).click();
+    await page.locator('.waterfall li').first().locator('.label').click();
+
+    await expect(page.locator('.waterfall .summary').first()).toHaveText(
+      'GET https://api.example/albums/42 → 500',
+    );
+  });
+
   test('a malformed trace id is refused rather than queried', async ({ page, request }) => {
     const refusal = await request.get(`${API}/api/traces/not-a-trace-id`);
 

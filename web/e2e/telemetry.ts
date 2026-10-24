@@ -187,6 +187,8 @@ export async function seedTrace(
     statusMessage?: string;
     /** What `recordException` writes: an event named `exception`. */
     exception?: { type: string; message: string; stacktrace?: string };
+    /** Put on the root span, as instrumentation would. */
+    attributes?: Record<string, string>;
   } = {},
 ): Promise<SeededTrace> {
   const traceId = hex(32);
@@ -214,6 +216,10 @@ export async function seedTrace(
                   spanId: rootSpanId,
                   name: options.name ?? 'GET /e2e',
                   kind: 2,
+                  attributes: Object.entries(options.attributes ?? {}).map(([key, value]) => ({
+                    key,
+                    value: { stringValue: value },
+                  })),
                   startTimeUnixNano: now,
                   endTimeUnixNano: `${Number(now) + 25_000_000}`,
                   status: {

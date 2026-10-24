@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, inject, input } from '@angular/core';
-import { AsyncPipe, DatePipe } from '@angular/common';
-import { combineLatest, defer, map, startWith } from 'rxjs';
+import { AsyncPipe, DatePipe, DecimalPipe } from '@angular/common';
+import { BehaviorSubject, combineLatest, defer, map, startWith } from 'rxjs';
 
 import { TracesStore } from '../../core/traces.store';
-import { Span } from '../../core/telemetry.model';
+import { Attributes, Span } from '../../core/telemetry.model';
 import { CopyButton } from '../../shared/copy-button';
 import { DurationPipe } from '../../shared/duration-pipe';
 
@@ -15,6 +15,26 @@ interface WaterfallRow {
   readonly width: number;
   /** What went wrong, when something did. See `failureOf`. */
   readonly failure?: SpanFailure;
+  /** What the span did, in one line, when its attributes say enough to tell.
+   * See `summarise`. */
+  readonly summary?: string;
+  readonly attributes: Field[];
+  /** Everything the instrumentation marked on the way through, minus the
+   * exception that is already shown as the failure. */
+  readonly events: SpanEvent[];
+}
+
+interface Field {
+  readonly key: string;
+  readonly value: string;
+}
+
+interface SpanEvent {
+  readonly name: string;
+  /** Milliseconds after the span started: the only reading that makes a mark
+   * comparable to the bar it sits under. */
+  readonly at: number;
+  readonly fields: Field[];
 }
 
 /**
@@ -29,7 +49,7 @@ interface SpanFailure {
 
 @Component({
   selector: 'wt-trace-detail',
-  imports: [AsyncPipe, DatePipe, DurationPipe, CopyButton],
+  imports: [AsyncPipe, DatePipe, DecimalPipe, DurationPipe, CopyButton],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
 
@@ -51,10 +71,20 @@ interface SpanFailure {
     <ol class="waterfall fx-m-0 fx-p-0">
       @for (row of waterfall$ | async; track row.span.SpanId) {
         <li [style.--depth]="row.depth">
-          <div class="label fx-flex fx-gap-2" [title]="row.span.SpanName">
+          <!-- The label is the handle: a span carries everything the
+               instrumentation knew about the operation, and until now the row
+               showed its name and its duration and dropped the rest. -->
+          <button
+            type="button"
+            class="label fx-flex fx-items-center fx-gap-2"
+            [title]="row.span.SpanName"
+            [attr.aria-expanded]="(open$ | async)?.has(row.span.SpanId) ?? false"
+            (click)="toggle(row.span.SpanId)"
+          >
+            <span class="chevron" aria-hidden="true">{{ (open$ | async)?.has(row.span.SpanId) ? '▾' : '▸' }}</span>
             <span class="service mono">{{ row.span.ServiceName }}</span>
             <span class="name">{{ row.span.SpanName }}</span>
-          </div>
+          </button>
           <div class="track">
             <div
               class="bar"
@@ -84,6 +114,45 @@ interface SpanFailure {
               </p>
               @if (failure.stack) {
                 <pre class="stack mono">{{ failure.stack }}</pre>
+              }
+            </div>
+          }
+
+          @if ((open$ | async)?.has(row.span.SpanId)) {
+            <div class="detail">
+              @if (row.summary) {
+                <!-- The conventions, read into one line. Underneath is
+                     everything, including the keys no convention covers. -->
+                <p class="summary mono fx-m-0">{{ row.summary }}</p>
+              }
+
+              @if (row.attributes.length) {
+                <dl class="fields">
+                  @for (field of row.attributes; track field.key) {
+                    <div>
+                      <dt class="mono dim">{{ field.key }}</dt>
+                      <dd class="mono">{{ field.value }}</dd>
+                    </div>
+                  }
+                </dl>
+              } @else {
+                <p class="dim fx-m-0">This span carries no attributes.</p>
+              }
+
+              @if (row.events.length) {
+                <ol class="events fx-m-0 fx-p-0">
+                  @for (event of row.events; track $index) {
+                    <li>
+                      <span class="at dim">+{{ event.at | number: '1.0-1' }} ms</span>
+                      <span class="event-name mono">{{ event.name }}</span>
+                      <span class="event-fields dim mono">
+                        @for (field of event.fields; track field.key) {
+                          {{ field.key }}={{ field.value }}
+                        }
+                      </span>
+                    </li>
+                  }
+                </ol>
               }
             </div>
           }
@@ -151,6 +220,87 @@ interface SpanFailure {
     .label {
       min-width: 0;
       padding-inline-start: calc(var(--depth, 0) * var(--fx-s));
+      /* A button, because it opens something; styled as the row it has always
+         been. */
+      appearance: none;
+      border: 0;
+      background: none;
+      padding-block: 0;
+      padding-inline-end: 0;
+      color: inherit;
+      font: inherit;
+      text-align: start;
+      cursor: pointer;
+    }
+
+    .label:hover .name,
+    .label:focus-visible .name {
+      color: var(--accent);
+    }
+
+    .chevron {
+      flex: none;
+      width: 0.8em;
+      color: var(--text-dim);
+    }
+
+    /* Raised, bordered and shadowed rather than flat on the card. It sits
+       between two rows that look exactly like the one it belongs to, so
+       without an edge of its own there is nothing to say where the span's
+       detail stops and the next span starts. */
+    .detail {
+      grid-column: 1 / -1;
+      margin-block: 0.4rem 0.6rem;
+      margin-inline-start: calc(var(--depth, 0) * var(--fx-s) + 0.8rem);
+      padding: 0.6rem 0.75rem;
+      border: 1px solid var(--line);
+      border-radius: var(--mat-sys-corner-small);
+      background: var(--surface-raised);
+      box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+      font-size: var(--fx-typography--1);
+    }
+
+    .summary {
+      color: var(--text);
+      margin-block-end: 0.4rem;
+    }
+
+    /* Keys in a column of their own: the point of a table of attributes is
+       scanning down the keys, which wrapping pairs make impossible. */
+    .fields {
+      display: grid;
+      grid-template-columns: minmax(8rem, max-content) minmax(0, 1fr);
+      gap: 0.1rem 1rem;
+      margin: 0;
+    }
+
+    .fields > div {
+      display: contents;
+    }
+
+    .fields dt,
+    .fields dd {
+      margin: 0;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .events {
+      list-style: none;
+      margin-block-start: 0.5rem;
+      border-block-start: 1px solid var(--line);
+      padding-block-start: 0.4rem;
+    }
+
+    .events li {
+      display: grid;
+      grid-template-columns: 5rem minmax(6rem, max-content) minmax(0, 1fr);
+      gap: 0.6rem;
+    }
+
+    .events .at {
+      text-align: end;
+      font-variant-numeric: tabular-nums;
     }
 
     .service {
@@ -197,14 +347,18 @@ interface SpanFailure {
 
     /* Spans the whole row: the grid's three columns are the bar's, and the
        reason belongs under all of them rather than in the duration's. */
+    /* The same raised block as the detail below it, kept apart by its edge
+       rather than by its colour. */
     .failure {
       grid-column: 1 / -1;
-      margin-block-start: 0.3rem;
-      margin-inline-start: calc(var(--depth, 0) * var(--fx-s));
-      padding: 0.4rem 0.6rem;
+      margin-block: 0.4rem 0;
+      margin-inline-start: calc(var(--depth, 0) * var(--fx-s) + 0.8rem);
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--line);
       border-inline-start: 2px solid var(--error);
-      background: var(--surface);
-      border-radius: 3px;
+      border-radius: var(--mat-sys-corner-small);
+      background: var(--surface-raised);
+      box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
       font-size: var(--fx-typography--1);
     }
 
@@ -240,6 +394,12 @@ export class TraceDetail {
    */
   protected readonly spans$ = defer(() => this.store.spansFor(this.traceId()));
   protected readonly loading$ = this.store.getLoadingFor('loadTrace').pipe(startWith(false));
+
+  /** Which rows are open, by span id. A set rather than one id: reading a
+   * trace is comparing its steps, which means having two of them open. */
+  private readonly open$$ = new BehaviorSubject<ReadonlySet<string>>(new Set());
+
+  protected readonly open$ = this.open$$.asObservable();
 
   /** Wall time from the first span's start to the last span's end. */
   protected readonly total$ = this.spans$.pipe(map(totalOf));
@@ -278,6 +438,13 @@ export class TraceDetail {
         }));
     }),
   );
+
+  protected toggle(spanId: string): void {
+    const open = new Set(this.open$$.value);
+
+    open.has(spanId) ? open.delete(spanId) : open.add(spanId);
+    this.open$$.next(open);
+  }
 
   /** OTel severity numbers: 1-4 trace, 5-8 debug, 9-12 info, 13-16 warn, 17+ error. */
   protected severityClass(severity: number): string {
@@ -330,6 +497,9 @@ function toWaterfall(spans: readonly Span[]): WaterfallRow[] {
       offset: ((startOf(span) - origin) / total) * 100,
       width: Math.max((span.Duration / total) * 100, 0.4),
       failure: failureOf(span),
+      summary: summarise(span.SpanAttributes ?? {}),
+      attributes: fieldsOf(span.SpanAttributes ?? {}),
+      events: eventsOf(span),
     });
 
     for (const child of children.get(span.SpanId) ?? []) {
@@ -384,11 +554,136 @@ function str(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
 }
 
+/** The first of these keys that the span actually carries. */
+function pick(attributes: Attributes, ...keys: string[]): string {
+  for (const key of keys) {
+    const value = str(attributes[key]);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
+/**
+ * What the span did, in one line.
+ *
+ * Only from the conventions, and only when they say enough: a line assembled
+ * out of half-recognised keys is worse than the table underneath, which at
+ * least does not pretend to have understood.
+ *
+ * Both spellings of every HTTP key, because this console reads from whatever
+ * is instrumented rather than from one generation of the spec — and both are
+ * in the data: 891 spans here use `http.request.method` and 249 the older
+ * `http.method`. Reading one of them summarises a quarter of the HTTP spans as
+ * a blank line.
+ */
+function summarise(attributes: Attributes): string | undefined {
+  const method = pick(attributes, 'http.request.method', 'http.method');
+
+  if (method) {
+    const target =
+      pick(attributes, 'url.full', 'http.url') ||
+      [
+        pick(attributes, 'url.scheme', 'http.scheme'),
+        pick(attributes, 'server.address', 'http.host', 'net.peer.name'),
+      ]
+        .filter(Boolean)
+        .join('://') + pick(attributes, 'url.path', 'http.target', 'http.route');
+
+    const status = pick(attributes, 'http.response.status_code', 'http.status_code');
+    const size = pick(attributes, 'http.response.body.size', 'http.response_content_length');
+
+    return [
+      `${method} ${target}`.trim(),
+      status && `→ ${status}`,
+      size && `· ${bytes(Number(size))}`,
+    ]
+      .filter(Boolean)
+      .join(' ');
+  }
+
+  const db = pick(attributes, 'db.system.name', 'db.system');
+
+  if (db) {
+    const operation = pick(attributes, 'db.operation.name', 'db.operation');
+    const collection = pick(attributes, 'db.collection.name', 'db.sql.table', 'db.name');
+    const statement = pick(attributes, 'db.query.text', 'db.statement');
+
+    return [db, operation, collection, statement && `· ${statement}`].filter(Boolean).join(' ');
+  }
+
+  const rpc = pick(attributes, 'rpc.system');
+
+  if (rpc) {
+    const service = pick(attributes, 'rpc.service');
+    const method = pick(attributes, 'rpc.method');
+
+    return [rpc, [service, method].filter(Boolean).join('/')].filter(Boolean).join(' ');
+  }
+
+  return undefined;
+}
+
+/** Everything on the span, sorted, with nothing interpreted. The custom keys
+ * live here — `musicbox.album.id` is not in any spec and is often the one that
+ * answers the question. */
+function fieldsOf(attributes: Attributes): Field[] {
+  return Object.entries(attributes)
+    .map(([key, value]) => ({ key, value: str(value) }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+}
+
+/**
+ * The span's events, as offsets from its start.
+ *
+ * The exception is dropped: it is already rendered above as the failure, and
+ * repeating it here would push the marks that are not an exception — the
+ * browser's `fetchStart`, `connectEnd`, `responseEnd` — off the bottom.
+ */
+function eventsOf(span: Span): SpanEvent[] {
+  const names = span.EventsName ?? [];
+  const times = span.EventsTimestamp ?? [];
+  const attributes = span.EventsAttributes ?? [];
+  const start = startOf(span);
+
+  return names
+    .map((name, index) => ({ name, index }))
+    .filter(({ name }, index) => !(name === 'exception' && index === names.indexOf('exception')))
+    .map(({ name, index }) => ({
+      name,
+      at: times[index] ? (nanosOf(times[index]) - start) / 1e6 : 0,
+      fields: fieldsOf(attributes[index] ?? {}),
+    }));
+}
+
+/** A content length is unreadable in bytes past about a kilobyte, and reading
+ * it is the whole reason it is on the line. */
+function bytes(value: number): string {
+  if (!Number.isFinite(value)) {
+    return '';
+  }
+
+  if (value < 1024) {
+    return `${value} B`;
+  }
+
+  return value < 1024 * 1024
+    ? `${(value / 1024).toFixed(1)} kB`
+    : `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
 /** ClickHouse renders DateTime64(9) as `YYYY-MM-DD hh:mm:ss.nnnnnnnnn`; the
  * sub-millisecond digits matter for ordering spans, and `Date.parse` drops
  * them, so the fractional part is read separately. */
 function startOf(span: Span): number {
-  const [datePart, fraction = ''] = span.Timestamp.split('.');
+  return nanosOf(span.Timestamp);
+}
+
+function nanosOf(timestamp: string): number {
+  const [datePart, fraction = ''] = timestamp.split('.');
   const millis = Date.parse(`${datePart.replace(' ', 'T')}Z`);
   const nanos = Number(fraction.padEnd(9, '0').slice(0, 9));
 
