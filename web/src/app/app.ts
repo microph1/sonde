@@ -187,6 +187,7 @@ export class App {
   protected readonly sections: Section[] = [
     { path: 'services', label: 'Services', icon: 'lan' },
     { path: 'traces', label: 'Traces', icon: 'account_tree' },
+    { path: 'operations', label: 'Operations', icon: 'speed' },
     { path: 'map', label: 'Map', icon: 'hub' },
     { path: 'logs', label: 'Logs', icon: 'subject' },
     { path: 'metrics', label: 'Metrics', icon: 'monitoring' },

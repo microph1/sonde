@@ -59,6 +59,12 @@ export const routes: Routes = [
         ],
       },
       {
+        path: 'operations',
+        title: 'Operations · sonde',
+        loadComponent: () =>
+          import('./features/operations-view/operations-view').then((m) => m.OperationsView),
+      },
+      {
         path: 'logs',
         title: 'Logs · sonde',
         loadComponent: () => import('./features/logs-view/logs-view').then((m) => m.LogsView),

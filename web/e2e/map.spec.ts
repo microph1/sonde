@@ -49,24 +49,36 @@ test.describe('map', () => {
 
     await page.goto('/all/map');
 
-    const node = page.locator('g.node', { hasText: caller }).locator('circle');
+    // `hover` rather than arithmetic on a bounding box: it scrolls the target
+    // into view and positions the pointer on it, which matters because the
+    // whole graph is scaled into a fixed frame and a node on a crowded map is
+    // only a few pixels across.
+    await page.locator('g.node', { hasText: caller }).locator('circle').hover();
 
-    // The mouse works in viewport coordinates and does no scrolling of its own,
-    // so a node below the fold would be dragged at thin air.
-    await node.scrollIntoViewIfNeeded();
+    await page.mouse.down();
+    await page.mouse.move(400, 300, { steps: 6 });
+    await page.mouse.up();
 
-    const box = await node.boundingBox();
+    // Letting go after a drag used to open the node the pointer went down on,
+    // which is what makes a draggable thing feel broken.
+    await expect(page).toHaveURL(/\/all\/map$/);
+  });
 
-    expect(box, 'the seeded service should be on the map').not.toBeNull();
+  test('a drag moves the drawing under the frame', async ({ page, request }) => {
+    await seedCall(request, uniqueService('pan-from'), uniqueService('pan-to'));
+
+    await page.goto('/all/map');
+
+    const figure = page.locator('figure.map');
+    const box = await figure.boundingBox();
+
+    expect(box, 'the map should be on the page').not.toBeNull();
 
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
     await page.mouse.down();
     await page.mouse.move(box!.x + box!.width / 2 + 90, box!.y + box!.height / 2 + 40, { steps: 6 });
     await page.mouse.up();
 
-    // Letting go after a drag used to open the node under the cursor, which is
-    // what makes a draggable thing feel broken.
-    await expect(page).toHaveURL(/\/all\/map/);
     await expect(page.locator('figure.map svg > g')).not.toHaveAttribute(
       'transform',
       /translate\(0 0\)/,

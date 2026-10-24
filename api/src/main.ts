@@ -15,6 +15,7 @@ import { GraphEndpoint } from './endpoints/graph.endpoint';
 import { LogsEndpoint } from './endpoints/logs.endpoint';
 import { AppsEndpoint } from './endpoints/apps.endpoint';
 import { MetricsEndpoint } from './endpoints/metrics.endpoint';
+import { OperationsEndpoint } from './endpoints/operations.endpoint';
 import { ServicesEndpoint } from './endpoints/services.endpoint';
 import { TracesEndpoint } from './endpoints/traces.endpoint';
 import { createApp } from './server/express-app';
@@ -38,6 +39,7 @@ import { StreamingEventHandler } from './server/streaming.handler';
     LogsEndpoint,
     ServicesEndpoint,
     GraphEndpoint,
+    OperationsEndpoint,
     { provide: LambdaDefaultHandler, useClass: StreamingEventHandler },
   ],
 })
@@ -63,6 +65,7 @@ export async function start(): Promise<void> {
       injector(ServicesEndpoint),
       injector(AppsEndpoint),
       injector(MetricsEndpoint),
+      injector(OperationsEndpoint),
     ],
     injector(AuthRoutes),
   );

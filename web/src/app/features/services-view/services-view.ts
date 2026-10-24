@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
-import { AsyncPipe, DatePipe, DecimalPipe } from '@angular/common';
+import { AsyncPipe, DatePipe, DecimalPipe, PercentPipe } from '@angular/common';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
@@ -9,6 +9,8 @@ import { combineLatest, filter, map, startWith, withLatestFrom, skip } from 'rxj
 
 import { AppScope } from '../../core/app-scope';
 import { DEFAULT_RANGE, RANGES, Range, ServicesStore } from '../../core/services.store';
+import { OperationsStore } from '../../core/operations.store';
+import { DurationPipe } from '../../shared/duration-pipe';
 import { PageHeader } from '../../shared/page-header';
 import { VolumeChart } from '../../shared/volume-chart';
 
@@ -19,6 +21,8 @@ import { VolumeChart } from '../../shared/volume-chart';
     AsyncPipe,
     DatePipe,
     DecimalPipe,
+    PercentPipe,
+    DurationPipe,
     VolumeChart,
     MatButtonToggleModule,
     MatFormFieldModule,
@@ -93,6 +97,12 @@ import { VolumeChart } from '../../shared/volume-chart';
           <th scope="col">Spans</th>
           <th scope="col">Logs</th>
           <th scope="col">Metrics</th>
+          <!-- Over the selected window, unlike the counts beside them, which
+               are for the whole of retention. A latency averaged over all time
+               would flatten away every incident it exists to show. -->
+          <th scope="col" class="num">p50</th>
+          <th scope="col" class="num">p95</th>
+          <th scope="col" class="num">Errors</th>
           <th scope="col">Last seen</th>
           <th scope="col"><span class="sr-only">Actions</span></th>
         </tr>
@@ -104,9 +114,23 @@ import { VolumeChart } from '../../shared/volume-chart';
             <td>{{ service.traces | number }}</td>
             <td>{{ service.logs | number }}</td>
             <td>{{ service.metrics | number }}</td>
+            @if ((latency$ | async)?.[service.ServiceName]; as red) {
+              <td class="num">{{ red.p50Ms * 1e6 | duration }}</td>
+              <td class="num">{{ red.p95Ms * 1e6 | duration }}</td>
+              <td class="num" [class.alarming]="red.errors > 0">
+                {{ red.errors ? (red.errors / red.calls | percent: '1.0-1') : '—' }}
+              </td>
+            } @else {
+              <!-- A service that sent no spans in this window has no latency,
+                   which is different from a latency of zero. -->
+              <td class="num dim">—</td>
+              <td class="num dim">—</td>
+              <td class="num dim">—</td>
+            }
             <td>{{ service.lastSeen | date: 'medium' }}</td>
             <td class="fx-flex fx-gap-3">
               <a [routerLink]="scope.link('traces')" [queryParams]="{ service: service.ServiceName }">traces</a>
+              <a [routerLink]="scope.link('operations')" [queryParams]="{ service: service.ServiceName }">operations</a>
               <a [routerLink]="scope.link('logs')" [queryParams]="{ service: service.ServiceName }">logs</a>
               @if (service.metrics) {
                 <a [routerLink]="scope.link('metrics')">metrics</a>
@@ -114,7 +138,7 @@ import { VolumeChart } from '../../shared/volume-chart';
             </td>
           </tr>
         } @empty {
-          <tr><td colspan="6" class="hint">Nothing has reported yet.</td></tr>
+          <tr><td colspan="9" class="hint">Nothing has reported yet.</td></tr>
         }
       </tbody>
     </table>
@@ -188,6 +212,7 @@ import { VolumeChart } from '../../shared/volume-chart';
 })
 export class ServicesView implements OnInit {
   private readonly store = inject(ServicesStore);
+  private readonly operations = inject(OperationsStore);
   protected readonly scope = inject(AppScope);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
@@ -294,6 +319,19 @@ export class ServicesView implements OnInit {
     .getLoadingFor('loadVolume')
     .pipe(startWith(false));
 
+  /**
+   * Latency and error rate per service, keyed by name for the table to look up.
+   *
+   * From the operations store because it is the same question at a coarser
+   * grouping, and asking it twice would mean two queries that could disagree.
+   * Keyed rather than joined row by row: the services list is all of retention
+   * and this is one window, so the two are different sets and a positional
+   * join would quietly pair the wrong rows.
+   */
+  protected readonly latency$ = this.operations.rows$.pipe(
+    map((rows) => Object.fromEntries(rows.map((row) => [row.ServiceName, row]))),
+  );
+
   constructor() {
     /**
      * The URL is the source of truth for the range, so a link carries the view
@@ -323,6 +361,15 @@ export class ServicesView implements OnInit {
         this.store.dispatch('loadServices');
         this.store.dispatch('loadVolume', { range, grouping });
       });
+
+    // The table's latency columns are of the selected window, so they reload
+    // with it — including the first emission, which is what fills them on
+    // arrival.
+    this.range$
+      .pipe(takeUntilDestroyed())
+      .subscribe((range) =>
+        this.operations.dispatch('load', { by: 'service', range, service: '', kind: '' }),
+      );
   }
 
   ngOnInit(): void {
