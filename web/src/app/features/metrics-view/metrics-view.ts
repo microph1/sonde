@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AsyncPipe } from '@angular/common';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatRippleModule } from '@angular/material/core';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatTooltipModule } from '@angular/material/tooltip';
@@ -139,6 +140,7 @@ function share(value: number, of: number): string {
     VolumeChart,
     Sparkline,
     TimeRangePicker,
+    MatButtonToggleModule,
     MatSlideToggleModule,
     MatRippleModule,
     MatTooltipModule, PageHeader],
@@ -158,6 +160,28 @@ function share(value: number, of: number): string {
           >
             per second
           </mat-slide-toggle>
+        }
+
+        @if (metric.kind === 'histogram') {
+          <!-- A histogram is a distribution, so any single line drawn from it
+               is a choice of percentile. Which one is the question being
+               asked: p50 is what it is usually like, p99 is what the unlucky
+               get. -->
+          <mat-button-toggle-group
+            aria-label="Percentile"
+            hideSingleSelectionIndicator
+            [value]="(percentile$ | async) ?? 0.95"
+          >
+            @for (option of percentiles; track option.value) {
+              <mat-button-toggle
+                [value]="option.value"
+                (click)="selectPercentile(option.value)"
+                [matTooltip]="option.hint"
+              >
+                {{ option.label }}
+              </mat-button-toggle>
+            }
+          </mat-button-toggle-group>
         }
       }
 
@@ -457,6 +481,14 @@ export class MetricsView implements OnInit {
   protected readonly selected$ = this.store.selected$;
   protected readonly points$ = this.store.points$;
   protected readonly rate$ = this.store.rate$;
+  protected readonly percentile$ = this.store.percentile$;
+
+  protected readonly percentiles = [
+    { value: 0.5, label: 'p50', hint: 'The median: what half of them are faster than' },
+    { value: 0.9, label: 'p90', hint: 'What nine in ten are faster than' },
+    { value: 0.95, label: 'p95', hint: 'What nineteen in twenty are faster than' },
+    { value: 0.99, label: 'p99', hint: 'What the unlucky hundredth waits for' },
+  ];
   protected readonly reference$ = this.store.reference$;
   protected readonly rangeLabel$ = this.store.range$.pipe(map((range) => describe(range)));
   protected readonly selectedName$ = this.store.selected$.pipe(map((metric) => metric?.name ?? ''));
@@ -594,6 +626,10 @@ export class MetricsView implements OnInit {
 
   protected pick(card: MetricCard): void {
     this.store.dispatch('selectMetric', card.members);
+  }
+
+  protected selectPercentile(percentile: number): void {
+    this.store.dispatch('selectPercentile', percentile);
   }
 
   protected toggleRate(rate: boolean): void {

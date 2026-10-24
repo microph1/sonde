@@ -110,6 +110,86 @@ export async function waitForEdge(
 }
 
 /**
+ * Posts a histogram as two cumulative exports a minute apart.
+ *
+ * Two, because the first export of a stream inside a window counts for
+ * nothing: its buckets hold everything the process ever observed, which is
+ * older than the window. The distribution the console draws is the difference
+ * between consecutive exports, so one point is no points.
+ */
+export async function seedHistogram(
+  request: APIRequestContext,
+  service: string,
+  metric: string,
+  bounds: number[] = [10, 100, 1000],
+): Promise<void> {
+  const minute = 60_000_000_000;
+  const now = Date.now() * 1_000_000;
+  // One observation to begin with, then two more in the top bucket: the
+  // percentile has to land in a bucket that only the difference reveals.
+  const exports = [
+    { at: now - 2 * minute, counts: ['0', '1', '0', '0'], count: '1', sum: 5, min: 5, max: 5 },
+    { at: now - minute, counts: ['0', '1', '0', '2'], count: '3', sum: 2405, min: 5, max: 1200 },
+  ];
+
+  const posted = await request.post(`${OTLP}/v1/metrics`, {
+    data: {
+      resourceMetrics: [
+        {
+          resource: {
+            attributes: [
+              { key: 'service.name', value: { stringValue: service } },
+              { key: 'service.instance.id', value: { stringValue: `${service}-1` } },
+            ],
+          },
+          scopeMetrics: [
+            {
+              metrics: [
+                {
+                  name: metric,
+                  unit: 'ms',
+                  description: 'seeded by the e2e suite',
+                  histogram: {
+                    // 2 is CUMULATIVE, which is what the console has to cope
+                    // with and what every instrument here actually sends.
+                    aggregationTemporality: 2,
+                    dataPoints: exports.map((point) => ({
+                      startTimeUnixNano: `${now - 3 * minute}`,
+                      timeUnixNano: `${point.at}`,
+                      count: point.count,
+                      sum: point.sum,
+                      min: point.min,
+                      max: point.max,
+                      bucketCounts: point.counts,
+                      explicitBounds: bounds,
+                      attributes: [{ key: 'route', value: { stringValue: '/seeded' } }],
+                    })),
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  });
+  expect(posted.ok(), 'the receiver should accept the histogram').toBeTruthy();
+
+  await expect
+    .poll(
+      async () => {
+        const response = await request.get(`${API}/api/metrics`);
+
+        expect(response.ok(), 'the read API should answer the seeding poll').toBeTruthy();
+
+        return (await response.text()).includes(metric);
+      },
+      { message: `histogram ${metric} never reached storage`, timeout: 30_000, intervals: [500] },
+    )
+    .toBe(true);
+}
+
+/**
  * Posts a gauge and waits for it to be listed.
  *
  * Metrics have no trace to follow them by, so the wait is on the instrument

@@ -61,6 +61,9 @@ export interface MetricsState {
   points: SeriesPoint[];
   range: Range;
   rate: boolean;
+  /** Which percentile to read from a histogram's buckets. Meaningless for the
+   * other kinds, which carry a value rather than a distribution. */
+  percentile: number;
   /** The cap a `.usage` gauge should be read against, when it reports one. */
   reference: number | null;
 }
@@ -71,6 +74,7 @@ export interface MetricsActions {
   selectMetric: (members: Member[]) => Observable<Selected>;
   selectRange: (range: Range) => Observable<Range>;
   toggleRate: (rate: boolean) => Observable<boolean>;
+  selectPercentile: (percentile: number) => Observable<number>;
   loadSeries: (query: SeriesQuery) => Observable<SeriesPoint[]>;
   loadReference: (metric: MetricSummary) => Observable<number | null>;
 }
@@ -86,6 +90,7 @@ export interface SeriesQuery {
   readonly labels: Record<string, string>;
   readonly range: Range;
   readonly rate: boolean;
+  readonly percentile: number;
 }
 
 /** Everything before the last segment: `container.memory.usage` scopes to
@@ -113,6 +118,7 @@ export class MetricsStore
   readonly points$ = this.select((state) => state.points);
   readonly range$ = this.select((state) => state.range);
   readonly rate$ = this.select((state) => state.rate);
+  readonly percentile$ = this.select((state) => state.percentile);
   readonly reference$ = this.select((state) => state.reference);
 
   constructor() {
@@ -127,15 +133,29 @@ export class MetricsStore
       // would show a handful of points; a day is the smallest window with shape.
       range: RANGES[2],
       rate: false,
+      percentile: 0.95,
       reference: null,
     });
 
     // The series follows all three, so the store owns the link rather than
     // asking the view to remember which of them require a reload.
-    combineLatest([this.selected$, this.members$, this.labels$, this.range$, this.rate$]).subscribe(
-      ([metric, members, labels, range, rate]) => {
+    combineLatest([
+      this.selected$,
+      this.members$,
+      this.labels$,
+      this.range$,
+      this.rate$,
+      this.percentile$,
+    ]).subscribe(
+      ([metric, members, labels, range, rate, percentile]) => {
         if (metric) {
-          this.dispatch('loadSeries', { members: members.length ? members : [metric], labels, range, rate });
+          this.dispatch('loadSeries', {
+            members: members.length ? members : [metric],
+            labels,
+            range,
+            rate,
+            percentile,
+          });
           this.dispatch('loadReference', metric);
         }
       },
@@ -241,6 +261,16 @@ export class MetricsStore
     return { ...state, rate };
   }
 
+  @Effect()
+  selectPercentile(percentile: number): Observable<number> {
+    return of(percentile);
+  }
+
+  @Reduce()
+  onSelectPercentile(state: MetricsState, percentile: number): MetricsState {
+    return { ...state, percentile };
+  }
+
   /**
    * One request per metric on the card, merged into one set of lines.
    *
@@ -262,6 +292,8 @@ export class MetricsStore
         // A rate is a counter's reading; asking a gauge for one would be asking
         // how fast a temperature is a temperature.
         rate: query.rate && metric.kind === 'sum',
+        // Only a histogram carries a distribution to take a percentile of.
+        percentile: metric.kind === 'histogram' ? query.percentile : undefined,
         limit: 10_000,
       });
 

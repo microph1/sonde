@@ -1,7 +1,7 @@
 import { Body, Endpoint, Lambda } from '@microgamma/apigator';
 import { Inject } from '@microphi/di';
 
-import { ClickHouseService } from '../clickhouse/clickhouse.service';
+import { ClickHouseService, QueryParams } from '../clickhouse/clickhouse.service';
 import { configFromEnv } from '../config';
 import { InjectableEndpoint } from '../server/injectable-endpoint';
 import { SearchFilters, assertTime, clampLimit } from './filters';
@@ -47,6 +47,9 @@ export interface MetricQuery extends SearchFilters {
    * process shows "2", which says nothing.
    */
   readonly rate?: boolean;
+  /** Which percentile to read out of a histogram's buckets. Meaningless for a
+   * gauge or a counter, which carry a value rather than a distribution. */
+  readonly percentile?: number;
 }
 
 export interface OverviewPoint {
@@ -336,7 +339,14 @@ export class MetricsEndpoint {
       to: assertTime(to, 'to'),
       bucket: Math.min(Math.max(Math.floor(query.bucketSeconds ?? 300), 10), 86_400),
       limit: clampLimit(query.limit, this.maxLimit),
+      // Clamped rather than rejected: a percentile outside the range is a
+      // caller's slip, and refusing the whole chart over it helps nobody.
+      quantile: Math.min(Math.max(query.percentile ?? 0.95, 0.001), 0.999),
     };
+
+    if (kind === 'histogram') {
+      return this.distribution(params);
+    }
 
     // A gauge is sampled, so a bucket's value is the average of its samples. A
     // cumulative counter only ever rises, so its bucket value is the last
@@ -383,6 +393,111 @@ export class MetricsEndpoint {
            FROM (${bucketed})
          )
          WHERE position > 1
+       )
+       ORDER BY bucket ASC
+       LIMIT {limit:UInt32}`,
+      params,
+    );
+  }
+
+  /**
+   * A percentile per bucket, read out of the histogram's own buckets.
+   *
+   * Until now this table was charted by `max(Value)`, a column it does not
+   * have — so every histogram answered `Unknown identifier 'Value'` and drew a
+   * flat line at zero. They are the latency instruments, which made them the
+   * most worth looking at and the only ones you could not.
+   *
+   * The counts are cumulative since the process started, so the distribution
+   * *inside* a bucket is the element-wise difference from the bucket before —
+   * the same move the counter rate makes, for the same reason. A restart sends
+   * a count backwards; `greatest(0, …)` reads that as a gap rather than as
+   * negative traffic.
+   *
+   * The percentile itself is linear interpolation inside whichever bucket the
+   * target count lands in, which is all a bucketed histogram can honestly
+   * give: the answer is only ever as precise as the bounds the instrument was
+   * configured with.
+   */
+  private async distribution(params: QueryParams): Promise<SeriesPoint[]> {
+    return this.clickhouse.rows<SeriesPoint>(
+      `SELECT toString(bucket) AS bucket, series, value FROM (
+         SELECT bucket, series,
+                -- Where the target count falls, and how far into that bucket.
+                arrayCumSum(counts) AS cumulative,
+                cumulative[length(cumulative)] AS total,
+                total * {quantile:Float64} AS target,
+                arrayFirstIndex(x -> x >= target, cumulative) AS at,
+                if(at <= 1, 0, cumulative[at - 1]) AS before,
+                if(at <= 1, 0, bounds[at - 1]) AS lower,
+                -- The last bucket is unbounded above; its own lower bound is
+                -- the only honest answer for anything that landed in it.
+                if(at > length(bounds), bounds[length(bounds)], bounds[at]) AS upper,
+                if(cumulative[at] = before,
+                   upper,
+                   lower + (upper - lower) * (target - before) / (cumulative[at] - before)) AS raw,
+                -- Held to what was actually observed.
+                --
+                -- Interpolating inside a bucket assumes the observations are
+                -- spread across it, and the bounds here jump from 100 ms to
+                -- 250: four calls a shade over 100 ms put p95 at 237, a number
+                -- no request ever took. The instrument also reports the
+                -- largest and smallest it saw, so the estimate can be held
+                -- between them. It only ever pulls an over-estimate back
+                -- towards something that happened.
+                least(greatest(raw, if(minSeen > 0, minSeen, raw)),
+                      if(maxSeen > 0, maxSeen, raw)) AS value
+         FROM (
+           SELECT bucket, series, any(bounds) AS bounds, sumForEach(step) AS counts,
+                  max(largest) AS maxSeen, min(smallest) AS minSeen
+           FROM (
+             SELECT toStartOfInterval(Timestamp, INTERVAL {bucket:UInt32} SECOND) AS bucket,
+                    series, bounds, largest, smallest,
+                    -- What this export added.
+                    --
+                    -- A stream whose total went down restarted, and everything
+                    -- it reports now is new since that restart. Its first
+                    -- export inside the window counts for nothing: the history
+                    -- behind it is older than the window, and taking it whole
+                    -- would pile every observation the process ever made into
+                    -- one bucket.
+                    multiIf(
+                      position = 1, arrayMap(x -> 0., counts),
+                      total >= previousTotal,
+                        arrayMap((now, then) -> greatest(0, now - then), counts, previous),
+                      counts
+                    ) AS step
+             FROM (
+               SELECT Timestamp,
+                      ${SERIES_LABEL} AS series,
+                      ExplicitBounds AS bounds,
+                      toFloat64(Max) AS largest,
+                      toFloat64(Min) AS smallest,
+                      arrayMap(x -> toFloat64(x), BucketCounts) AS counts,
+                      toFloat64(Count) AS total,
+                      lagInFrame(arrayMap(x -> toFloat64(x), BucketCounts)) OVER stream AS previous,
+                      lagInFrame(toFloat64(Count)) OVER stream AS previousTotal,
+                      row_number() OVER stream AS position
+               FROM otel_metrics_histogram
+               WHERE MetricName = {name:String}
+                 AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
+                 AND ({service:String} = '' OR ServiceName = {service:String})
+                 AND Timestamp >= parseDateTime64BestEffort({from:String}, 9)
+                 AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
+               -- Per emitting process, not per series: two processes reporting
+               -- the same attributes are two independent streams, and
+               -- differencing across them is arithmetic on unrelated numbers.
+               WINDOW stream AS (
+                 PARTITION BY ServiceName,
+                              ResourceAttributes['service.instance.id'],
+                              ${SERIES_LABEL}
+                 ORDER BY Timestamp
+               )
+             )
+           )
+           GROUP BY bucket, series
+         )
+         WHERE total > 0
        )
        ORDER BY bucket ASC
        LIMIT {limit:UInt32}`,

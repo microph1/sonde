@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { seedGauge, uniqueService } from './telemetry';
+import { seedGauge, seedHistogram, uniqueService } from './telemetry';
 
 test.describe('metrics', () => {
   test('lists a seeded instrument and draws it when picked', async ({ page, request }) => {
@@ -20,6 +20,28 @@ test.describe('metrics', () => {
 
     await expect(page.locator('.detail')).toContainText(family);
     await expect(page.locator('.detail')).toContainText('seeded by the e2e suite');
+  });
+
+  test('a histogram draws its distribution, not an empty chart', async ({ page, request }) => {
+    const service = uniqueService('hist');
+    const family = `e2e.latency.${Date.now().toString(36)}`;
+
+    await seedHistogram(request, service, `${family}.duration`);
+
+    await page.goto('/all/metrics?range=1h');
+    await page.locator('.card', { hasText: family }).click();
+
+    // Every histogram used to answer `Unknown identifier 'Value'` and draw a
+    // flat line at zero, silently: the detail query asked a column the table
+    // does not have. They are the latency instruments, so they were the ones
+    // most worth looking at and the only ones you could not.
+    await expect(page.locator('.detail .legend')).toContainText('route=/seeded');
+    await expect(page.locator('.detail')).not.toContainText('Nothing reported');
+
+    // A distribution has no single value, so the line is always a choice.
+    await expect(page.getByRole('radio', { name: 'p99' })).toBeVisible();
+    await page.getByRole('radio', { name: 'p50' }).click();
+    await expect(page.locator('.detail .legend')).toContainText('route=/seeded');
   });
 
   test('a service that only reports metrics is not a dead service', async ({ page, request }) => {
