@@ -44,6 +44,40 @@ test.describe('metrics', () => {
     await expect(page.locator('.detail .legend')).toContainText('route=/seeded');
   });
 
+  test('a metric can be split by one attribute and filtered by another', async ({
+    page,
+    request,
+  }) => {
+    const service = uniqueService('split');
+    const family = `e2e.split.${Date.now().toString(36)}`;
+
+    await seedHistogram(request, service, `${family}.duration`);
+
+    await page.goto('/all/metrics?range=1h');
+    await page.locator('.card', { hasText: family }).click();
+
+    // A series was the whole attribute set and only that, so a metric with
+    // dozens of combinations drew six lines and an "Other" and there was no
+    // way to ask for the one split you came for.
+    await expect(page.locator('.detail .legend')).toContainText('route=/seeded');
+    await expect(page.locator('.detail .legend')).toContainText('outcome=ok');
+
+    await page.locator('.breakdown .split mat-select').click();
+    await page.getByRole('option', { name: 'route' }).click();
+    await page.keyboard.press('Escape');
+
+    await expect(page.locator('.detail .legend')).toContainText('route=/seeded');
+    await expect(page.locator('.detail .legend')).not.toContainText('outcome=');
+
+    // And the filter keeps only what was asked for: a value nothing carries
+    // leaves an honestly empty chart rather than an unfiltered one.
+    await page.locator('.breakdown .filter', { hasText: 'outcome' }).locator('mat-select').click();
+    await page.getByRole('option', { name: 'ok', exact: true }).click();
+    await page.keyboard.press('Escape');
+
+    await expect(page.locator('.detail .legend')).toContainText('route=/seeded');
+  });
+
   test('a service that only reports metrics is not a dead service', async ({ page, request }) => {
     const service = uniqueService('metrics-only');
 

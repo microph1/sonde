@@ -64,6 +64,12 @@ export interface MetricsState {
   /** Which percentile to read from a histogram's buckets. Meaningless for the
    * other kinds, which carry a value rather than a distribution. */
   percentile: number;
+  /** The attribute keys a split or a filter can be made of. */
+  facets: MetricFacet[];
+  /** Which keys make a series. Empty means the whole attribute set. */
+  split: string[];
+  /** Which values to keep, by key. A key absent from here is unfiltered. */
+  where: Record<string, string[]>;
   /** The cap a `.usage` gauge should be read against, when it reports one. */
   reference: number | null;
 }
@@ -75,8 +81,23 @@ export interface MetricsActions {
   selectRange: (range: Range) => Observable<Range>;
   toggleRate: (rate: boolean) => Observable<boolean>;
   selectPercentile: (percentile: number) => Observable<number>;
+  loadFacets: (metric: MetricSummary) => Observable<MetricFacet[]>;
+  selectSplit: (keys: string[]) => Observable<string[]>;
+  selectFilter: (filter: Filter) => Observable<Filter>;
   loadSeries: (query: SeriesQuery) => Observable<SeriesPoint[]>;
   loadReference: (metric: MetricSummary) => Observable<number | null>;
+}
+
+/** The values kept for one attribute key. */
+export interface Filter {
+  readonly key: string;
+  readonly values: string[];
+}
+
+/** The attribute keys a metric carries, and the values each has taken. */
+export interface MetricFacet {
+  readonly key: string;
+  readonly values: string[];
 }
 
 /** One line to draw, and what to call it. */
@@ -91,6 +112,8 @@ export interface SeriesQuery {
   readonly range: Range;
   readonly rate: boolean;
   readonly percentile: number;
+  readonly split: string[];
+  readonly where: Record<string, string[]>;
 }
 
 /** Everything before the last segment: `container.memory.usage` scopes to
@@ -119,6 +142,9 @@ export class MetricsStore
   readonly range$ = this.select((state) => state.range);
   readonly rate$ = this.select((state) => state.rate);
   readonly percentile$ = this.select((state) => state.percentile);
+  readonly facets$ = this.select((state) => state.facets);
+  readonly split$ = this.select((state) => state.split);
+  readonly where$ = this.select((state) => state.where);
   readonly reference$ = this.select((state) => state.reference);
 
   constructor() {
@@ -134,6 +160,9 @@ export class MetricsStore
       range: RANGES[2],
       rate: false,
       percentile: 0.95,
+      facets: [],
+      split: [],
+      where: {},
       reference: null,
     });
 
@@ -146,8 +175,10 @@ export class MetricsStore
       this.range$,
       this.rate$,
       this.percentile$,
+      this.split$,
+      this.where$,
     ]).subscribe(
-      ([metric, members, labels, range, rate, percentile]) => {
+      ([metric, members, labels, range, rate, percentile, split, where]) => {
         if (metric) {
           this.dispatch('loadSeries', {
             members: members.length ? members : [metric],
@@ -155,8 +186,13 @@ export class MetricsStore
             range,
             rate,
             percentile,
+            split,
+            where,
           });
           this.dispatch('loadReference', metric);
+          // The keys a split or a filter can be made of come from the metric
+          // and the window, so they are reloaded with either.
+          this.dispatch('loadFacets', metric);
         }
       },
     );
@@ -238,6 +274,11 @@ export class MetricsStore
       members: selection.members,
       labels: selection.labels,
       rate: selection.lead.kind === 'sum' && selection.lead.monotonic === 1,
+      // A different metric carries different attributes, so a split or a
+      // filter made of the last one's keys would quietly match nothing.
+      facets: [],
+      split: [],
+      where: {},
     };
   }
 
@@ -271,6 +312,53 @@ export class MetricsStore
     return { ...state, percentile };
   }
 
+  /** What a split or a filter can be made of, for the metric now selected. */
+  @Effect()
+  loadFacets(metric: MetricSummary): Observable<MetricFacet[]> {
+    return from(
+      this.request<MetricFacet[]>('POST', '/metrics/facets', {
+        name: metric.name,
+        kind: metric.kind,
+        ...resolve(this.snapshot().range),
+      }),
+    );
+  }
+
+  @Reduce()
+  onLoadFacets(state: MetricsState, facets: MetricFacet[]): MetricsState {
+    return { ...state, facets };
+  }
+
+  @Effect()
+  selectSplit(keys: string[]): Observable<string[]> {
+    return of(keys);
+  }
+
+  @Reduce()
+  onSelectSplit(state: MetricsState, split: string[]): MetricsState {
+    return { ...state, split };
+  }
+
+  @Effect()
+  selectFilter(filter: Filter): Observable<Filter> {
+    return of(filter);
+  }
+
+  /** An empty selection means "all of them", so the key is dropped rather than
+   * kept as an empty list, which would match nothing. */
+  @Reduce()
+  onSelectFilter(state: MetricsState, filter: Filter): MetricsState {
+    const where = { ...state.where };
+
+    if (filter.values.length > 0) {
+      where[filter.key] = filter.values;
+    } else {
+      delete where[filter.key];
+    }
+
+    return { ...state, where };
+  }
+
   /**
    * One request per metric on the card, merged into one set of lines.
    *
@@ -294,6 +382,8 @@ export class MetricsStore
         rate: query.rate && metric.kind === 'sum',
         // Only a histogram carries a distribution to take a percentile of.
         percentile: metric.kind === 'histogram' ? query.percentile : undefined,
+        groupBy: query.split,
+        where: query.where,
         limit: 10_000,
       });
 

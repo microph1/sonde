@@ -8,7 +8,7 @@ const d = getDebugger('sonde:api:clickhouse');
 
 /** Values a query placeholder can carry. Everything reaches ClickHouse as a
  * bound parameter, never as interpolated SQL. */
-export type QueryParams = Record<string, string | number>;
+export type QueryParams = Record<string, string | number | readonly string[]>;
 
 @Injectable()
 export class ClickHouseService {
@@ -58,7 +58,7 @@ export class ClickHouseService {
     // ClickHouse binds `{name:Type}` placeholders from `param_name`, which is
     // what keeps user input out of the SQL text entirely.
     for (const [name, value] of Object.entries(params)) {
-      url.searchParams.set(`param_${name}`, String(value));
+      url.searchParams.set(`param_${name}`, encodeValue(value));
     }
 
     d('query', { sql, params });
@@ -83,4 +83,21 @@ export class ClickHouseService {
 
     return response;
   }
+}
+
+/**
+ * How a bound value is written for ClickHouse.
+ *
+ * Scalars go as themselves. An array goes in ClickHouse's own literal form,
+ * which is the one place a value has to carry its own punctuation — so the
+ * quote and the backslash inside it are escaped here rather than hoped about.
+ */
+function encodeValue(value: string | number | readonly string[]): string {
+  if (!Array.isArray(value)) {
+    return String(value);
+  }
+
+  return `[${(value as readonly string[])
+    .map((item) => `'${item.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`)
+    .join(',')}]`;
 }

@@ -3,6 +3,8 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AsyncPipe } from '@angular/common';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatRippleModule } from '@angular/material/core';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { combineLatest, distinctUntilChanged, map, startWith, skip } from 'rxjs';
@@ -141,6 +143,8 @@ function share(value: number, of: number): string {
     Sparkline,
     TimeRangePicker,
     MatButtonToggleModule,
+    MatFormFieldModule,
+    MatSelectModule,
     MatSlideToggleModule,
     MatRippleModule,
     MatTooltipModule, PageHeader],
@@ -190,6 +194,42 @@ function share(value: number, of: number): string {
 
     @if (selected$ | async; as metric) {
       <section class="detail fx-mb-6" [class.stale]="(loading$ | async) ?? false">
+        <!-- What the lines are made of. A series used to be the whole
+             attribute set and nothing else: 48 combinations on one metric
+             meant six lines and an "Other", with no way to ask for the split
+             you came for. -->
+        @if ((facets$ | async)?.length) {
+          <div class="breakdown fx-flex fx-flex-wrap fx-items-center fx-gap-2 fx-mb-3">
+            <mat-form-field subscriptSizing="dynamic" class="split">
+              <mat-label>Split by</mat-label>
+              <mat-select
+                multiple
+                [value]="(split$ | async) ?? []"
+                (selectionChange)="selectSplit($event.value)"
+              >
+                @for (facet of facets$ | async; track facet.key) {
+                  <mat-option [value]="facet.key">{{ facet.key }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+
+            @for (facet of facets$ | async; track facet.key) {
+              <mat-form-field subscriptSizing="dynamic" class="filter">
+                <mat-label>{{ facet.key }}</mat-label>
+                <mat-select
+                  multiple
+                  [value]="(where$ | async)?.[facet.key] ?? []"
+                  (selectionChange)="selectFilter(facet.key, $event.value)"
+                >
+                  @for (value of facet.values; track value) {
+                    <mat-option [value]="value">{{ value }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+            }
+          </div>
+        }
+
         <wt-volume-chart
           [points]="(points$ | async) ?? []"
           [empty]="absence(metric)"
@@ -288,6 +328,17 @@ function share(value: number, of: number): string {
       gap: var(--fx-3xs);
       color: var(--text-dim);
       font-size: var(--fx-typography--1);
+    }
+
+    /* One width for all of them, so a key with a long name does not make its
+       own control twice the size of the one beside it. */
+    .breakdown mat-form-field {
+      flex: none;
+      width: 11rem;
+    }
+
+    .breakdown .split {
+      width: 13rem;
     }
 
     .detail {
@@ -482,6 +533,9 @@ export class MetricsView implements OnInit {
   protected readonly points$ = this.store.points$;
   protected readonly rate$ = this.store.rate$;
   protected readonly percentile$ = this.store.percentile$;
+  protected readonly facets$ = this.store.facets$;
+  protected readonly split$ = this.store.split$;
+  protected readonly where$ = this.store.where$;
 
   protected readonly percentiles = [
     { value: 0.5, label: 'p50', hint: 'The median: what half of them are faster than' },
@@ -626,6 +680,14 @@ export class MetricsView implements OnInit {
 
   protected pick(card: MetricCard): void {
     this.store.dispatch('selectMetric', card.members);
+  }
+
+  protected selectSplit(keys: string[]): void {
+    this.store.dispatch('selectSplit', keys);
+  }
+
+  protected selectFilter(key: string, values: string[]): void {
+    this.store.dispatch('selectFilter', { key, values });
   }
 
   protected selectPercentile(percentile: number): void {

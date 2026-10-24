@@ -50,6 +50,21 @@ export interface MetricQuery extends SearchFilters {
   /** Which percentile to read out of a histogram's buckets. Meaningless for a
    * gauge or a counter, which carry a value rather than a distribution. */
   readonly percentile?: number;
+  /**
+   * Which attribute keys make a series. Empty means all of them, which is what
+   * the chart did and only ever did: `musicbox.action.duration` carries 48
+   * attribute combinations, so it drew six lines and an "Other" and there was
+   * no way to ask for the one split you cared about.
+   */
+  readonly groupBy?: string[];
+  /** Attribute values to keep, by key. A key absent from here is unfiltered. */
+  readonly where?: Record<string, string[]>;
+}
+
+/** The attribute keys a metric carries, and what values each has taken. */
+export interface MetricFacet {
+  readonly key: string;
+  readonly values: string[];
 }
 
 export interface OverviewPoint {
@@ -108,9 +123,41 @@ const TABLES: Record<MetricKind, string> = {
  * which attributes a given metric happens to carry.
  */
 const SERIES_LABEL = `
-  arrayStringConcat(
-    arrayMap((k, v) -> concat(k, '=', v), mapKeys(Attributes), mapValues(Attributes)),
-    ', '
+  if(
+    length({groupBy:Array(String)}) = 0,
+    arrayStringConcat(
+      arrayMap((k, v) -> concat(k, '=', v), mapKeys(Attributes), mapValues(Attributes)),
+      ', '
+    ),
+    -- Only the keys asked for. Everything else collapses into the same line,
+    -- which is the point: "by outcome" is one question and "by outcome and
+    -- method and instance" is another.
+    arrayStringConcat(
+      arrayMap(k -> concat(k, '=', Attributes[k]), {groupBy:Array(String)}),
+      ', '
+    )
+  )
+`;
+
+/** Past this many values, a key is an identifier rather than a facet. */
+const MAX_FACET_VALUES = 40;
+
+/**
+ * Keep only the attribute values asked for.
+ *
+ * Bound as two parallel arrays rather than built into the text: the keys come
+ * from whatever the instrumentation happened to emit, and user-supplied
+ * identifiers have no business reaching a query string. An empty filter keeps
+ * everything.
+ */
+const ATTRIBUTE_FILTER = `
+  (
+    length({filterKeys:Array(String)}) = 0
+    OR arrayAll(
+      (k, v) -> has(splitByChar('\\0', v), Attributes[k]),
+      {filterKeys:Array(String)},
+      {filterValues:Array(String)}
+    )
   )
 `;
 
@@ -317,6 +364,51 @@ export class MetricsEndpoint {
     });
   }
 
+  /**
+   * The attribute keys this metric carries, and the values each has taken.
+   *
+   * What a split or a filter can be made of. Bounded by the cardinality of the
+   * attributes rather than by the volume of data, and capped besides: a key
+   * with two thousand values is an identifier rather than a facet, and
+   * offering it as a dropdown would be a worse answer than offering nothing.
+   */
+  @Lambda({ method: 'POST', path: '/metrics/facets' })
+  public async facets(@Body() query: MetricQuery): Promise<MetricFacet[]> {
+    if (!query?.name) {
+      throw new Error('[400] name is required');
+    }
+
+    const kind = query.kind ?? 'gauge';
+
+    if (!Object.hasOwn(TABLES, kind)) {
+      throw new Error('[400] kind must be gauge, sum or histogram');
+    }
+
+    const to = query.to ?? new Date().toISOString();
+    const from = query.from ?? new Date(Date.parse(to) - 6 * 60 * 60 * 1000).toISOString();
+
+    return this.clickhouse.rows<MetricFacet>(
+      `SELECT key, arraySort(groupUniqArray(value)) AS values
+       FROM (
+         SELECT arrayJoin(mapKeys(Attributes)) AS key, Attributes[key] AS value
+         FROM ${TABLES[kind]}
+         WHERE MetricName = {name:String}
+           AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
+           AND Timestamp >= parseDateTime64BestEffort({from:String}, 9)
+           AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
+       )
+       GROUP BY key
+       HAVING length(values) <= ${MAX_FACET_VALUES}
+       ORDER BY key`,
+      {
+        name: query.name,
+        app: query.app ?? '',
+        from: assertTime(from, 'from'),
+        to: assertTime(to, 'to'),
+      },
+    );
+  }
+
   @Lambda({ method: 'POST', path: '/metrics/query' })
   public async query(@Body() query: MetricQuery): Promise<SeriesPoint[]> {
     const kind = query?.kind ?? 'gauge';
@@ -342,6 +434,7 @@ export class MetricsEndpoint {
       // Clamped rather than rejected: a percentile outside the range is a
       // caller's slip, and refusing the whole chart over it helps nobody.
       quantile: Math.min(Math.max(query.percentile ?? 0.95, 0.001), 0.999),
+      ...facetParams(query),
     };
 
     if (kind === 'histogram') {
@@ -364,6 +457,7 @@ export class MetricsEndpoint {
         AND ({service:String} = '' OR ServiceName = {service:String})
         AND Timestamp >= parseDateTime64BestEffort({from:String}, 9)
         AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
+        AND ${ATTRIBUTE_FILTER}
       GROUP BY bucket, series
     `;
 
@@ -468,31 +562,35 @@ export class MetricsEndpoint {
                       counts
                     ) AS step
              FROM (
-               SELECT Timestamp,
-                      ${SERIES_LABEL} AS series,
-                      ExplicitBounds AS bounds,
-                      toFloat64(Max) AS largest,
-                      toFloat64(Min) AS smallest,
-                      arrayMap(x -> toFloat64(x), BucketCounts) AS counts,
-                      toFloat64(Count) AS total,
-                      lagInFrame(arrayMap(x -> toFloat64(x), BucketCounts)) OVER stream AS previous,
-                      lagInFrame(toFloat64(Count)) OVER stream AS previousTotal,
+               SELECT Timestamp, series, bounds, largest, smallest, counts, total,
+                      lagInFrame(counts) OVER stream AS previous,
+                      lagInFrame(total) OVER stream AS previousTotal,
                       row_number() OVER stream AS position
-               FROM otel_metrics_histogram
-               WHERE MetricName = {name:String}
-                 AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
-                 AND ({service:String} = '' OR ServiceName = {service:String})
-                 AND Timestamp >= parseDateTime64BestEffort({from:String}, 9)
-                 AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
+               FROM (
+                 -- The label is computed a level down because a query
+                 -- parameter is not substituted inside a WINDOW clause:
+                 -- ClickHouse answers "parameter was not set" for the same
+                 -- placeholder it accepts two lines above, in the SELECT.
+                 SELECT Timestamp,
+                        concat(ServiceName, '\\0', ResourceAttributes['service.instance.id']) AS stream_id,
+                        ${SERIES_LABEL} AS series,
+                        ExplicitBounds AS bounds,
+                        toFloat64(Max) AS largest,
+                        toFloat64(Min) AS smallest,
+                        arrayMap(x -> toFloat64(x), BucketCounts) AS counts,
+                        toFloat64(Count) AS total
+                 FROM otel_metrics_histogram
+                 WHERE MetricName = {name:String}
+                   AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
+                   AND ({service:String} = '' OR ServiceName = {service:String})
+                   AND Timestamp >= parseDateTime64BestEffort({from:String}, 9)
+                   AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
+                   AND ${ATTRIBUTE_FILTER}
+               )
                -- Per emitting process, not per series: two processes reporting
                -- the same attributes are two independent streams, and
                -- differencing across them is arithmetic on unrelated numbers.
-               WINDOW stream AS (
-                 PARTITION BY ServiceName,
-                              ResourceAttributes['service.instance.id'],
-                              ${SERIES_LABEL}
-                 ORDER BY Timestamp
-               )
+               WINDOW stream AS (PARTITION BY stream_id, series ORDER BY Timestamp)
              )
            )
            GROUP BY bucket, series
@@ -504,4 +602,22 @@ export class MetricsEndpoint {
       params,
     );
   }
+}
+
+/**
+ * The grouping and filtering arrays, as bound parameters.
+ *
+ * The values for one key travel as a single NUL-joined string so the two
+ * arrays stay parallel — ClickHouse has no nested-array parameter, and a
+ * separator that cannot occur in an attribute value is cheaper than a second
+ * pair of arrays describing the shape of the first.
+ */
+function facetParams(query: { groupBy?: string[]; where?: Record<string, string[]> }): QueryParams {
+  const where = Object.entries(query.where ?? {}).filter(([, values]) => values.length > 0);
+
+  return {
+    groupBy: query.groupBy ?? [],
+    filterKeys: where.map(([key]) => key),
+    filterValues: where.map(([, values]) => values.join('\0')),
+  };
 }

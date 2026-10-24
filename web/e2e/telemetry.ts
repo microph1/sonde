@@ -162,7 +162,12 @@ export async function seedHistogram(
                       max: point.max,
                       bucketCounts: point.counts,
                       explicitBounds: bounds,
-                      attributes: [{ key: 'route', value: { stringValue: '/seeded' } }],
+                      attributes: [
+                        { key: 'route', value: { stringValue: '/seeded' } },
+                        // A second key, so a split and a filter have
+                        // something to be made of.
+                        { key: 'outcome', value: { stringValue: 'ok' } },
+                      ],
                     })),
                   },
                 },
