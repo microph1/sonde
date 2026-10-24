@@ -5,6 +5,7 @@ import { EMPTY, Observable, combineLatest, from, map, of, skip } from 'rxjs';
 import { API_BASE_URL } from './api-base-url';
 import { AppScope } from './app-scope';
 import { RANGES, Range } from './services.store';
+import { bucketOf, resolve, spanMinutes } from './time-range';
 import { SeriesPoint } from './telemetry.model';
 
 export type MetricKind = 'gauge' | 'sum' | 'histogram';
@@ -256,8 +257,8 @@ export class MetricsStore
       const points = await this.request<SeriesPoint[]>('POST', '/metrics/query', {
         name: metric.name,
         kind: metric.kind,
-        bucketSeconds: query.range.bucketSeconds,
-        from: new Date(Date.now() - query.range.windowMinutes * 60_000).toISOString(),
+        bucketSeconds: bucketOf(query.range).seconds,
+        ...resolve(query.range),
         // A rate is a counter's reading; asking a gauge for one would be asking
         // how fast a temperature is a temperature.
         rate: query.rate && metric.kind === 'sum',
@@ -309,11 +310,11 @@ export class MetricsStore
   private fetchOverview(range: Range): Observable<MetricOverview[]> {
     return from(
       this.request<MetricOverview[]>('POST', '/metrics/overview', {
-        from: new Date(Date.now() - range.windowMinutes * 60_000).toISOString(),
+        ...resolve(range),
         // Coarser than the detail chart on purpose: a card is a couple of
         // hundred pixels wide, and more points than that is detail nobody can
         // see. Sixty buckets across whatever the window is.
-        bucketSeconds: Math.max(Math.round(range.windowMinutes), 1),
+        bucketSeconds: Math.max(Math.round(spanMinutes(range)), 1),
       }),
     );
   }

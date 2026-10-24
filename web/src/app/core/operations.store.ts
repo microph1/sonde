@@ -5,6 +5,7 @@ import { Observable, from, of } from 'rxjs';
 import { API_BASE_URL } from './api-base-url';
 import { AppScope } from './app-scope';
 import { DEFAULT_RANGE, Range } from './services.store';
+import { resolve } from './time-range';
 
 /** One row of rate, errors and duration. `SpanName` is empty when the row is a
  * whole service rather than one of its operations. */
@@ -87,7 +88,7 @@ export class OperationsStore
         service: query.service,
         kind: query.kind,
         sort: query.sort,
-        from: new Date(Date.now() - query.range.windowMinutes * 60_000).toISOString(),
+        ...resolve(query.range),
         limit: 200,
       }),
     );

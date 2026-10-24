@@ -5,6 +5,7 @@ import { Observable, from, of } from 'rxjs';
 import { API_BASE_URL } from './api-base-url';
 import { AppScope } from './app-scope';
 import { DEFAULT_RANGE, Range } from './services.store';
+import { resolve } from './time-range';
 
 export interface GraphNode {
   readonly id: string;
@@ -67,7 +68,7 @@ export class GraphStore
     return from(
       this.request<ServiceGraph>({
         app: this.scope.current,
-        from: new Date(Date.now() - range.windowMinutes * 60_000).toISOString(),
+        ...resolve(range),
         group,
       }),
     );

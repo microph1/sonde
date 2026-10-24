@@ -1,16 +1,18 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AsyncPipe } from '@angular/common';
-import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatRippleModule } from '@angular/material/core';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { combineLatest, map, startWith, skip } from 'rxjs';
+import { combineLatest, distinctUntilChanged, map, startWith, skip } from 'rxjs';
+import { ActivatedRoute } from '@angular/router';
 
 import { AppScope } from '../../core/app-scope';
 import { Member, MetricOverview, MetricSummary, MetricsStore } from '../../core/metrics.store';
-import { RANGES, Range } from '../../core/services.store';
+import { DEFAULT_RANGE } from '../../core/services.store';
+import { describe, fromParams, sameRange } from '../../core/time-range';
 import { PageHeader } from '../../shared/page-header';
+import { TimeRangePicker } from '../../shared/time-range-picker';
 import { Sparkline } from '../../shared/sparkline';
 import { VolumeChart } from '../../shared/volume-chart';
 
@@ -136,7 +138,7 @@ function share(value: number, of: number): string {
     AsyncPipe,
     VolumeChart,
     Sparkline,
-    MatButtonToggleModule,
+    TimeRangePicker,
     MatSlideToggleModule,
     MatRippleModule,
     MatTooltipModule, PageHeader],
@@ -159,17 +161,7 @@ function share(value: number, of: number): string {
         }
       }
 
-      <mat-button-toggle-group
-        aria-label="Time range"
-        hideSingleSelectionIndicator
-        [value]="rangeLabel$ | async"
-      >
-        @for (option of ranges; track option.label) {
-          <mat-button-toggle [value]="option.label" (click)="selectRange(option)">
-            {{ option.label }}
-          </mat-button-toggle>
-        }
-      </mat-button-toggle-group>
+      <wt-time-range />
     </wt-page-header>
 
     @if (selected$ | async; as metric) {
@@ -400,8 +392,8 @@ function share(value: number, of: number): string {
 export class MetricsView implements OnInit {
   private readonly store = inject(MetricsStore);
   private readonly scope = inject(AppScope);
+  private readonly route = inject(ActivatedRoute);
 
-  protected readonly ranges = RANGES;
   protected readonly overview$ = this.store.overview$;
 
   /**
@@ -466,13 +458,23 @@ export class MetricsView implements OnInit {
   protected readonly points$ = this.store.points$;
   protected readonly rate$ = this.store.rate$;
   protected readonly reference$ = this.store.reference$;
-  protected readonly rangeLabel$ = this.store.range$.pipe(map((range) => range.label));
+  protected readonly rangeLabel$ = this.store.range$.pipe(map((range) => describe(range)));
   protected readonly selectedName$ = this.store.selected$.pipe(map((metric) => metric?.name ?? ''));
 
   constructor() {
     // Switching app changes a path parameter, and Angular reuses the component
     // rather than recreating it — so nothing would re-run on its own. skip(1)
     // because the first emission is the scope this page just loaded under.
+    // The window lives in the URL, so a change to it arrives as a navigation,
+    // including one from the back button.
+    this.route.queryParamMap
+      .pipe(
+        map((params) => fromParams(params) ?? DEFAULT_RANGE),
+        distinctUntilChanged((a, b) => sameRange(a, b)),
+        takeUntilDestroyed(),
+      )
+      .subscribe((range) => this.store.dispatch('selectRange', range));
+
     this.scope.app$
       .pipe(skip(1), takeUntilDestroyed())
       .subscribe(() => {
@@ -592,10 +594,6 @@ export class MetricsView implements OnInit {
 
   protected pick(card: MetricCard): void {
     this.store.dispatch('selectMetric', card.members);
-  }
-
-  protected selectRange(range: Range): void {
-    this.store.dispatch('selectRange', range);
   }
 
   protected toggleRate(rate: boolean): void {

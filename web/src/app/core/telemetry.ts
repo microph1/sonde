@@ -20,15 +20,21 @@ export class Telemetry {
     return this.get<ServiceSummary[]>('/services');
   }
 
-  /** Volume per group over a window, for the overview charts. */
+  /** Volume per group over a window, for the overview charts. The window
+   * travels as two instants, so it can be one that has already ended. */
   async timeseries(
-    windowMinutes: number,
+    window: { from: string; to: string },
     bucketSeconds: number,
     grouping: string,
   ): Promise<VolumePoint[]> {
-    return this.get<VolumePoint[]>(
-      `/services/timeseries?windowMinutes=${windowMinutes}&bucketSeconds=${bucketSeconds}&group=${grouping}`,
-    );
+    const params = new URLSearchParams({
+      from: window.from,
+      to: window.to,
+      bucketSeconds: String(bucketSeconds),
+      group: grouping,
+    });
+
+    return this.get<VolumePoint[]>(`/services/timeseries?${params}`);
   }
 
   /** The dimensions the charts may be split by. */

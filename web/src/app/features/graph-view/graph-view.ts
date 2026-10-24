@@ -1,19 +1,20 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AsyncPipe, DecimalPipe } from '@angular/common';
-import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { Router, RouterLink } from '@angular/router';
-import { BehaviorSubject, map, skip } from 'rxjs';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { BehaviorSubject, distinctUntilChanged, map, skip } from 'rxjs';
 
 import { AppScope } from '../../core/app-scope';
 import { GraphEdge, GraphStore, ServiceGraph } from '../../core/graph.store';
-import { RANGES, Range } from '../../core/services.store';
+import { DEFAULT_RANGE, Range } from '../../core/services.store';
+import { fromParams, sameRange } from '../../core/time-range';
 import { PageHeader } from '../../shared/page-header';
+import { TimeRangePicker } from '../../shared/time-range-picker';
 
 interface PlacedNode {
   readonly id: string;
@@ -98,7 +99,7 @@ const ERROR_THRESHOLD = 0.01;
     DecimalPipe,
     RouterLink,
     PageHeader,
-    MatButtonToggleModule,
+    TimeRangePicker,
     MatFormFieldModule,
     MatSelectModule,
     MatTooltipModule,
@@ -120,13 +121,7 @@ const ERROR_THRESHOLD = 0.01;
         </mat-select>
       </mat-form-field>
 
-      <mat-button-toggle-group aria-label="Time range" hideSingleSelectionIndicator [value]="(range$ | async)?.label">
-        @for (option of ranges; track option.label) {
-          <mat-button-toggle [value]="option.label" (click)="selectRange(option)">
-            {{ option.label }}
-          </mat-button-toggle>
-        }
-      </mat-button-toggle-group>
+      <wt-time-range />
     </wt-page-header>
 
     @if (layout$ | async; as layout) {
@@ -399,8 +394,8 @@ export class GraphView implements OnInit {
   private readonly store = inject(GraphStore);
   protected readonly scope = inject(AppScope);
   private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
 
-  protected readonly ranges = RANGES;
   protected readonly groupings = [
     { key: 'service', label: 'Service' },
     { key: 'app', label: 'App' },
@@ -451,14 +446,22 @@ export class GraphView implements OnInit {
       .subscribe(() => {
         this.store.dispatch('load');
       });
+
+    // The window lives in the URL, so a change to it arrives as a navigation,
+    // including one from the back button.
+    this.route.queryParamMap
+      .pipe(
+        map((params) => fromParams(params) ?? DEFAULT_RANGE),
+        distinctUntilChanged((a, b) => sameRange(a, b)),
+        takeUntilDestroyed(),
+      )
+      .subscribe((range) => {
+        this.store.dispatch('selectRange', range);
+        this.store.dispatch('load');
+      });
   }
 
   ngOnInit(): void {
-    this.store.dispatch('load');
-  }
-
-  protected selectRange(range: Range): void {
-    this.store.dispatch('selectRange', range);
     this.store.dispatch('load');
   }
 

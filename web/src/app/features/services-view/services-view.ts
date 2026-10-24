@@ -1,6 +1,5 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
 import { AsyncPipe, DatePipe, DecimalPipe, PercentPipe } from '@angular/common';
-import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -8,10 +7,12 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { combineLatest, filter, map, startWith, withLatestFrom, skip } from 'rxjs';
 
 import { AppScope } from '../../core/app-scope';
-import { DEFAULT_RANGE, RANGES, Range, ServicesStore } from '../../core/services.store';
+import { DEFAULT_RANGE, Range, ServicesStore } from '../../core/services.store';
+import { bucketOf, describe, fromParams, sameRange, toParams } from '../../core/time-range';
 import { OperationsStore } from '../../core/operations.store';
 import { DurationPipe } from '../../shared/duration-pipe';
 import { PageHeader } from '../../shared/page-header';
+import { TimeRangePicker } from '../../shared/time-range-picker';
 import { VolumeChart } from '../../shared/volume-chart';
 
 @Component({
@@ -24,9 +25,9 @@ import { VolumeChart } from '../../shared/volume-chart';
     PercentPipe,
     DurationPipe,
     VolumeChart,
-    MatButtonToggleModule,
+
     MatFormFieldModule,
-    MatSelectModule, PageHeader],
+    MatSelectModule, PageHeader, TimeRangePicker],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (range$ | async; as range) {
@@ -46,13 +47,7 @@ import { VolumeChart } from '../../shared/volume-chart';
           </mat-select>
         </mat-form-field>
 
-        <mat-button-toggle-group aria-label="Time range" hideSingleSelectionIndicator [value]="range.label">
-          @for (option of ranges; track option.label) {
-            <mat-button-toggle [value]="option.label" (click)="select(option)">
-              {{ option.label }}
-            </mat-button-toggle>
-          }
-        </mat-button-toggle-group>
+        <wt-time-range />
       </wt-page-header>
 
       <div class="tiles fx-gap-2 fx-mb-5">
@@ -75,12 +70,12 @@ import { VolumeChart } from '../../shared/volume-chart';
         <wt-volume-chart
           [points]="(spans$ | async) ?? []"
           title="Spans"
-          [unit]="'per ' + range.bucketLabel"
+          [unit]="'per ' + bucket(range)"
         />
         <wt-volume-chart
           [points]="(logs$ | async) ?? []"
           title="Log records"
-          [unit]="'per ' + range.bucketLabel"
+          [unit]="'per ' + bucket(range)"
         />
       </div>
     }
@@ -217,7 +212,6 @@ export class ServicesView implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
 
-  protected readonly ranges = RANGES;
 
   protected readonly services$ = this.store.services$;
   protected readonly range$ = this.store.range$;
@@ -260,7 +254,7 @@ export class ServicesView implements OnInit {
         {
           label: 'Spans',
           value: spans,
-          detail: `last ${range.label}`,
+          detail: describe(range),
           alarming: false,
           link: this.scope.link('traces'),
           params: {},
@@ -269,7 +263,7 @@ export class ServicesView implements OnInit {
         {
           label: 'Log records',
           value: logs,
-          detail: `last ${range.label}`,
+          detail: describe(range),
           alarming: false,
           link: this.scope.link('logs'),
           params: {},
@@ -291,7 +285,7 @@ export class ServicesView implements OnInit {
         {
           label: 'Services reporting',
           value: services,
-          detail: `last ${range.label}`,
+          detail: describe(range),
           alarming: false,
           // This one has no search behind it — the list it counts is the table
           // on this page, so it goes there rather than somewhere adjacent.
@@ -341,12 +335,12 @@ export class ServicesView implements OnInit {
      */
     this.route.queryParamMap
       .pipe(
-        map((params) => RANGES.find((range) => range.label === params.get('range'))),
+        map((params) => fromParams(params)),
         withLatestFrom(this.range$),
-        // A missing or unknown param leaves the store's range alone; so does one
-        // that already matches, which is what stops entering the page from
-        // refetching what the store just loaded.
-        filter(([fromUrl, current]) => Boolean(fromUrl) && fromUrl !== current),
+        // A URL that names no window leaves the store alone; so does one that
+        // already matches, which stops entering the page from refetching what
+        // the store just loaded.
+        filter(([fromUrl, current]) => Boolean(fromUrl) && !sameRange(fromUrl, current)),
         map(([fromUrl]) => fromUrl as Range),
         takeUntilDestroyed(),
       )
@@ -376,27 +370,27 @@ export class ServicesView implements OnInit {
     this.store.dispatch('loadServices');
     this.store.dispatch('loadGroupings');
 
-    // A link that names no range gets the default written into it, so the URL
+    // A link that names no window gets the default written into it, so the URL
     // always says what is on screen and is always worth copying.
-    if (!this.route.snapshot.queryParamMap.has('range')) {
-      this.select(DEFAULT_RANGE);
+    if (!fromParams(this.route.snapshot.queryParamMap)) {
+      void this.router.navigate([], {
+        relativeTo: this.route,
+        queryParams: toParams(DEFAULT_RANGE),
+        queryParamsHandling: 'merge',
+        // Refining one view rather than moving to another: the back button
+        // should leave the page, not step through every window you tried.
+        replaceUrl: true,
+      });
     }
+  }
+
+  /** The bucket the chart's points were aggregated into, named for the axis. */
+  protected bucket(range: Range): string {
+    return bucketOf(range).label;
   }
 
   protected selectGrouping(key: string): void {
     this.store.dispatch('selectGrouping', key);
-  }
-
-  protected select(range: Range): void {
-    // `replaceUrl` because choosing a window is refining one view rather than
-    // moving to another; the back button should leave the page, not step
-    // through every range you tried.
-    void this.router.navigate([], {
-      relativeTo: this.route,
-      queryParams: { range: range.label },
-      queryParamsHandling: 'merge',
-      replaceUrl: true,
-    });
   }
 }
 

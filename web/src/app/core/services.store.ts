@@ -4,22 +4,17 @@ import { Observable, combineLatest, from, map, of } from 'rxjs';
 
 import { Telemetry } from './telemetry';
 import { ServiceSummary, VolumePoint } from './telemetry.model';
+import { DEFAULT_RANGE, TimeRange, bucketOf, resolve } from './time-range';
 
-/** Windows offered above the charts, with a bucket that keeps every one of them
- * at roughly 50-70 points — dense enough to show shape, sparse enough to stay
- * readable at this width. */
-export const RANGES = [
-  { label: '1h', windowMinutes: 60, bucketSeconds: 60, bucketLabel: 'minute' },
-  { label: '6h', windowMinutes: 360, bucketSeconds: 300, bucketLabel: '5 minutes' },
-  { label: '24h', windowMinutes: 1440, bucketSeconds: 1800, bucketLabel: '30 minutes' },
-  { label: '7d', windowMinutes: 10080, bucketSeconds: 10800, bucketLabel: '3 hours' },
-] as const;
-
-export type Range = (typeof RANGES)[number];
-
-/** What a link that names no range gets. The URL is the only place a range is
- * remembered, so there is nothing else to fall back to. */
-export const DEFAULT_RANGE: Range = RANGES[2];
+/**
+ * Re-exported from [`time-range`], which is where a window is defined now that
+ * one can be absolute as well as relative. Kept here because every store and
+ * page imports `Range` from this file, and a rename across all of them would
+ * say nothing the alias does not.
+ */
+export { RANGES } from './time-range';
+export { DEFAULT_RANGE };
+export type Range = TimeRange;
 
 export interface ServicesState {
   services: ServiceSummary[];
@@ -95,13 +90,14 @@ export class ServicesStore
 
   @Effect()
   loadVolume(query: VolumeQuery): Observable<VolumePoint[]> {
-    return from(
-      this.telemetry.timeseries(
-        query.range.windowMinutes,
-        query.range.bucketSeconds,
-        query.grouping,
-      ),
-    ).pipe(map((points) => densify(points, query.range)));
+    const window = resolve(query.range);
+    const bucket = bucketOf(query.range);
+
+    return from(this.telemetry.timeseries(window, bucket.seconds, query.grouping)).pipe(
+      // Densified against the same window the request named, so a gap reads as
+      // zero rather than as a straight line between two distant points.
+      map((points) => densify(points, window, bucket.seconds)),
+    );
   }
 
   @Effect()
@@ -159,16 +155,20 @@ export class ServicesStore
  * position means time and a gap reads as zero rather than as a straight line
  * between two distant points.
  */
-export function densify(points: VolumePoint[], range: Range): VolumePoint[] {
+export function densify(
+  points: VolumePoint[],
+  window: { from: string; to: string },
+  bucketSeconds: number,
+): VolumePoint[] {
   if (points.length === 0) {
     return points;
   }
 
-  const stepMs = range.bucketSeconds * 1000;
+  const stepMs = bucketSeconds * 1000;
   // Align to the same boundaries ClickHouse used, so filled buckets land on the
   // grid rather than beside it.
-  const last = Math.floor(Date.now() / stepMs) * stepMs;
-  const first = last - range.windowMinutes * 60 * 1000;
+  const last = Math.floor(Date.parse(window.to) / stepMs) * stepMs;
+  const first = Math.floor(Date.parse(window.from) / stepMs) * stepMs;
 
   const services = [...new Set(points.map((point) => point.ServiceName))];
   const byKey = new Map(points.map((point) => [`${point.bucket}|${point.ServiceName}`, point]));

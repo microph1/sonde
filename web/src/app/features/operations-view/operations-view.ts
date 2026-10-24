@@ -2,18 +2,19 @@ import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/cor
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AsyncPipe, DecimalPipe, PercentPipe } from '@angular/common';
 import { MatButtonModule } from '@angular/material/button';
-import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { map, skip, startWith } from 'rxjs';
+import { ActivatedRoute, RouterLink } from '@angular/router';
+import { distinctUntilChanged, map, skip, startWith } from 'rxjs';
 
 import { AppScope } from '../../core/app-scope';
 import { OperationSort, OperationsStore } from '../../core/operations.store';
-import { RANGES, Range } from '../../core/services.store';
+import { DEFAULT_RANGE, Range } from '../../core/services.store';
+import { fromParams, sameRange } from '../../core/time-range';
 import { PageHeader } from '../../shared/page-header';
+import { TimeRangePicker } from '../../shared/time-range-picker';
 import { DurationPipe } from '../../shared/duration-pipe';
 
 const KINDS = ['Server', 'Client', 'Internal', 'Producer', 'Consumer'];
@@ -29,7 +30,7 @@ const KINDS = ['Server', 'Client', 'Internal', 'Producer', 'Consumer'];
     RouterLink,
     PageHeader,
     MatButtonModule,
-    MatButtonToggleModule,
+    TimeRangePicker,
     MatFormFieldModule,
     MatInputModule,
     MatSelectModule,
@@ -40,17 +41,7 @@ const KINDS = ['Server', 'Client', 'Internal', 'Producer', 'Consumer'];
       heading="Operations"
       subtitle="How often each one runs, how often it fails, and how long it takes — read from the spans, not from a metric anyone had to remember to emit."
     >
-      <mat-button-toggle-group
-        aria-label="Time range"
-        hideSingleSelectionIndicator
-        [value]="(range$ | async)?.label"
-      >
-        @for (option of ranges; track option.label) {
-          <mat-button-toggle [value]="option.label" (click)="selectRange(option)">
-            {{ option.label }}
-          </mat-button-toggle>
-        }
-      </mat-button-toggle-group>
+      <wt-time-range />
     </wt-page-header>
 
     <form [formGroup]="filters" (ngSubmit)="run()" class="filters fx-flex fx-flex-wrap fx-items-end fx-gap-3 fx-mb-4">
@@ -208,9 +199,7 @@ export class OperationsView implements OnInit {
   private readonly store = inject(OperationsStore);
   protected readonly scope = inject(AppScope);
   private readonly route = inject(ActivatedRoute);
-  private readonly router = inject(Router);
 
-  protected readonly ranges = RANGES;
   protected readonly kinds = KINDS;
   protected readonly columns: { label: string; sort: OperationSort }[] = [
     { label: 'Calls', sort: 'calls' },
@@ -239,24 +228,22 @@ export class OperationsView implements OnInit {
     // so nothing would re-run on its own. skip(1) because the first emission is
     // the scope this page loaded under.
     this.scope.app$.pipe(skip(1), takeUntilDestroyed()).subscribe(() => this.run());
+
+    // The window lives in the URL, so a change to it arrives as a navigation,
+    // including one from the back button. skip(1) because the first emission
+    // is the window the page loaded with, which ngOnInit already asked for.
+    this.route.queryParamMap
+      .pipe(
+        map((params) => fromParams(params) ?? DEFAULT_RANGE),
+        distinctUntilChanged((a, b) => sameRange(a, b)),
+        skip(1),
+        takeUntilDestroyed(),
+      )
+      .subscribe((range) => this.run({ range }));
   }
 
   ngOnInit(): void {
-    const range = RANGES.find(
-      (option) => option.label === this.route.snapshot.queryParamMap.get('range'),
-    );
-
-    this.run(range ? { range } : {});
-  }
-
-  protected selectRange(range: Range): void {
-    this.router.navigate([], {
-      relativeTo: this.route,
-      queryParams: { range: range.label },
-      queryParamsHandling: 'merge',
-      replaceUrl: true,
-    });
-    this.run({ range });
+    this.run({ range: fromParams(this.route.snapshot.queryParamMap) ?? DEFAULT_RANGE });
   }
 
   protected sortBy(sort: OperationSort): void {

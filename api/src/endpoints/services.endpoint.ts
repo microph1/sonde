@@ -3,6 +3,7 @@ import { Inject } from '@microphi/di';
 
 import { InjectableEndpoint } from '../server/injectable-endpoint';
 import { GROUPINGS, groupingExpression } from './grouping';
+import { assertTime } from './filters';
 
 import { ClickHouseService } from '../clickhouse/clickhouse.service';
 
@@ -76,7 +77,15 @@ export class ServicesEndpoint {
     @Path('bucketSeconds') bucketSeconds?: string,
     @Path('group') group?: string,
     @Path('app') app?: string,
+    @Path('from') from?: string,
+    @Path('to') to?: string,
   ): Promise<VolumePoint[]> {
+    // Two ends rather than a width back from now, when the caller gives them:
+    // a window that always ends at `now` cannot be pointed at an incident that
+    // has finished, which is most of the incidents worth looking at.
+    const to_ = to ?? new Date().toISOString();
+    const from_ = from ?? new Date(Date.parse(to_) - 360 * 60_000).toISOString();
+    const bounded = Boolean(from && to);
     const window = clamp(Number(windowMinutes ?? 360), 5, 7 * 24 * 60);
     // A day, not an hour. The old ceiling was below the three-hour bucket the
     // seven-day range asks for, so the server quietly answered in hourly
@@ -88,6 +97,10 @@ export class ServicesEndpoint {
     // From an allow-list, never from the request: this one reaches the SQL text
     // rather than travelling as a bound parameter.
     const dimension = groupingExpression(group);
+    const windowSql = bounded
+      ? `Timestamp >= parseDateTime64BestEffort({from:String}, 9)
+           AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)`
+      : 'Timestamp >= now() - INTERVAL {window:UInt32} MINUTE';
 
     return this.clickhouse.rows<VolumePoint>(
       `SELECT toString(bucket) AS bucket, name AS ServiceName,
@@ -102,7 +115,7 @@ export class ServicesEndpoint {
                 countIf(StatusCode = 'Error') AS errors,
                 countIf(StatusCode = 'Error') AS spanErrors, 0 AS logErrors
          FROM otel_traces
-         WHERE Timestamp >= now() - INTERVAL {window:UInt32} MINUTE
+         WHERE ${windowSql}
            AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
          GROUP BY bucket, name
          UNION ALL
@@ -111,7 +124,7 @@ export class ServicesEndpoint {
                 countIf(SeverityNumber >= 17) AS errors,
                 0 AS spanErrors, countIf(SeverityNumber >= 17) AS logErrors
          FROM otel_logs
-         WHERE Timestamp >= now() - INTERVAL {window:UInt32} MINUTE
+         WHERE ${windowSql}
            AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
          GROUP BY bucket, name
        )
@@ -120,7 +133,7 @@ export class ServicesEndpoint {
        WHERE name != ''
        GROUP BY bucket, name
        ORDER BY bucket ASC`,
-      { window, bucket, app: app ?? '' },
+      { window, bucket, app: app ?? '', from: assertTime(from_, 'from'), to: assertTime(to_, 'to') },
     );
   }
 

@@ -1,7 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
-import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
@@ -10,11 +9,13 @@ import { AsyncPipe, DatePipe } from '@angular/common';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { PageHeader } from '../../shared/page-header';
-import { BehaviorSubject, startWith, skip } from 'rxjs';
+import { TimeRangePicker } from '../../shared/time-range-picker';
+import { BehaviorSubject, distinctUntilChanged, map, startWith, skip } from 'rxjs';
 
 import { AppScope } from '../../core/app-scope';
 import { LogsStore } from '../../core/logs.store';
-import { DEFAULT_RANGE, RANGES, Range } from '../../core/services.store';
+import { DEFAULT_RANGE, Range } from '../../core/services.store';
+import { fromParams, resolve, sameRange } from '../../core/time-range';
 import { LogFilters, LogRecord } from '../../core/telemetry.model';
 
 /** How much of a record's fields fits on one line before it stops being a
@@ -27,24 +28,14 @@ const SUMMARY_CHARS = 70;
 
 @Component({
   selector: 'wt-logs-view',
-  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule, PageHeader, MatButtonToggleModule],
+  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule, PageHeader, TimeRangePicker],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <wt-page-header
       heading="Logs"
       subtitle="Records with the fields their instrumentation attached. Expand a row for the whole set."
     >
-      <mat-button-toggle-group
-        aria-label="Time range"
-        hideSingleSelectionIndicator
-        [value]="(range$ | async)?.label"
-      >
-        @for (option of ranges; track option.label) {
-          <mat-button-toggle [value]="option.label" (click)="selectRange(option)">
-            {{ option.label }}
-          </mat-button-toggle>
-        }
-      </mat-button-toggle-group>
+      <wt-time-range />
     </wt-page-header>
 
     <form [formGroup]="filters" (ngSubmit)="run()" class="filters fx-flex fx-flex-wrap fx-items-end fx-gap-3 fx-mb-4">
@@ -352,17 +343,10 @@ export class LogsView implements OnInit {
   private readonly open$$ = new BehaviorSubject<ReadonlySet<number>>(new Set());
 
   protected readonly expanded$ = this.open$$.asObservable();
-  protected readonly ranges = RANGES;
-
-  /** The window to search. In the URL because a link to "what happened" is
-   * worthless without the when, and in a subject because the search reads it
-   * at dispatch time rather than subscribing to it. */
-  private readonly chosen$$ = new BehaviorSubject<Range>(
-    RANGES.find((option) => option.label === this.route.snapshot.queryParamMap.get('range')) ??
-      DEFAULT_RANGE,
-  );
-
-  protected readonly range$ = this.chosen$$.asObservable();
+  /** The window to search, read from the URL that the picker writes. Mirrored
+   * into a field because the search reads it at dispatch time rather than
+   * subscribing to it. */
+  private range: Range = fromParams(this.route.snapshot.queryParamMap) ?? DEFAULT_RANGE;
 
   protected readonly rows$ = this.store.rows$;
   protected readonly live$ = this.store.live$;
@@ -377,6 +361,22 @@ export class LogsView implements OnInit {
       .subscribe(() => {
         this.run();
       });
+
+    // The window lives in the URL, so a change to it arrives as a navigation
+    // — including one from the back button, which is what makes stepping back
+    // through time work. skip(1) because the first emission is the window the
+    // page loaded with, and ngOnInit searches that one.
+    this.route.queryParamMap
+      .pipe(
+        map((params) => fromParams(params) ?? DEFAULT_RANGE),
+        distinctUntilChanged((a, b) => sameRange(a, b)),
+        skip(1),
+        takeUntilDestroyed(),
+      )
+      .subscribe((range) => {
+        this.range = range;
+        this.run();
+      });
   }
 
   ngOnInit(): void {
@@ -387,17 +387,6 @@ export class LogsView implements OnInit {
       return;
     }
 
-    this.run();
-  }
-
-  protected selectRange(range: Range): void {
-    this.chosen$$.next(range);
-    this.router.navigate([], {
-      relativeTo: this.route,
-      queryParams: { range: range.label },
-      queryParamsHandling: 'merge',
-      replaceUrl: true,
-    });
     this.run();
   }
 
@@ -489,7 +478,7 @@ export class LogsView implements OnInit {
 
   private currentFilters(): LogFilters {
     const { service, contains, scope, minSeverity, limit } = this.filters.getRawValue();
-    const range = this.chosen$$.value;
+
 
     return {
       service: service ?? '',
@@ -497,7 +486,7 @@ export class LogsView implements OnInit {
       scope: scope ?? '',
       minSeverity: Number(minSeverity ?? 0),
       limit: limit ?? 200,
-      from: new Date(Date.now() - range.windowMinutes * 60_000).toISOString(),
+      ...resolve(this.range),
     };
   }
 }

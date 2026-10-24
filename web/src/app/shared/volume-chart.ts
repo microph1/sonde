@@ -523,11 +523,29 @@ function compact(value: number): string {
   return String(value);
 }
 
-/** ClickHouse renders `YYYY-MM-DD hh:mm:ss`; the axis wants the time, the
- * tooltip wants enough to know which day. */
+/**
+ * ClickHouse renders `YYYY-MM-DD hh:mm:ss` in UTC; the axis wants the time, the
+ * tooltip wants enough to know which day — both in the reader's own zone.
+ *
+ * The string used to be sliced and printed as it arrived, so every chart was
+ * labelled in UTC while every timestamp beside it was local. Nobody notices on
+ * a relative window; ask for 09:00 to 12:00 and an axis reading 07:00 to 10:00
+ * is the whole page calling itself a liar.
+ */
 function shortTime(bucket: string, withDate = false): string {
-  const [date, time] = bucket.split(' ');
-  const hhmm = (time ?? '').slice(0, 5);
+  const at = new Date(`${bucket.replace(' ', 'T')}Z`);
 
-  return withDate ? `${(date ?? '').slice(5)} ${hhmm}` : hhmm;
+  if (Number.isNaN(at.getTime())) {
+    return bucket;
+  }
+
+  const hhmm = at.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+
+  return withDate
+    ? `${at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${hhmm}`
+    : hhmm;
 }
