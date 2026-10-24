@@ -280,6 +280,12 @@ const ERROR_THRESHOLD = 0.01;
   styles: `
     .map {
       position: relative;
+      /* A frame, not a canvas that grows with the graph.
+         The layout gives every node a row of its own, so a height that followed
+         it put a thirty-service map two thousand pixels down the page and the
+         first node off the top of the screen. The whole graph is scaled into
+         this box instead, and getting closer is what the zoom is for. */
+      block-size: clamp(20rem, 60vh, 45rem);
       margin: 0 0 var(--fx-m);
       padding: var(--fx-s);
       border: 1px solid var(--line);
@@ -313,8 +319,10 @@ const ERROR_THRESHOLD = 0.01;
 
     svg {
       display: block;
-      width: 100%;
-      height: auto;
+      /* Fills the frame; the viewBox and the default xMidYMid meet do the
+         fitting, so the graph arrives whole and centred whatever its shape. */
+      inline-size: 100%;
+      block-size: 100%;
     }
 
     .edge {
