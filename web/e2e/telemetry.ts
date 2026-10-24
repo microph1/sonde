@@ -180,13 +180,21 @@ export async function seedGauge(
 export async function seedTrace(
   request: APIRequestContext,
   service: string,
-  options: { status?: 1 | 2; name?: string } = {},
+  options: {
+    status?: 1 | 2;
+    name?: string;
+    /** `setStatus`'s message, which is separate from any exception event. */
+    statusMessage?: string;
+    /** What `recordException` writes: an event named `exception`. */
+    exception?: { type: string; message: string; stacktrace?: string };
+  } = {},
 ): Promise<SeededTrace> {
   const traceId = hex(32);
   const rootSpanId = hex(16);
   const childSpanId = hex(16);
   const now = `${Date.now()}000000`;
   const status = options.status ?? 1;
+  const thrown = options.exception;
 
   const traces = await request.post(`${OTLP}/v1/traces`, {
     data: {
@@ -208,7 +216,30 @@ export async function seedTrace(
                   kind: 2,
                   startTimeUnixNano: now,
                   endTimeUnixNano: `${Number(now) + 25_000_000}`,
-                  status: { code: status },
+                  status: {
+                    code: status,
+                    ...(options.statusMessage ? { message: options.statusMessage } : {}),
+                  },
+                  ...(thrown
+                    ? {
+                        events: [
+                          {
+                            timeUnixNano: `${Number(now) + 20_000_000}`,
+                            name: 'exception',
+                            attributes: [
+                              { key: 'exception.type', value: { stringValue: thrown.type } },
+                              { key: 'exception.message', value: { stringValue: thrown.message } },
+                              ...(thrown.stacktrace
+                                ? [{
+                                    key: 'exception.stacktrace',
+                                    value: { stringValue: thrown.stacktrace },
+                                  }]
+                                : []),
+                            ],
+                          },
+                        ],
+                      }
+                    : {}),
                 },
                 {
                   traceId,

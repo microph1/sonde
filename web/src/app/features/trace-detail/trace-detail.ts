@@ -13,6 +13,18 @@ interface WaterfallRow {
   /** Percentages of the trace's total wall time. */
   readonly offset: number;
   readonly width: number;
+  /** What went wrong, when something did. See `failureOf`. */
+  readonly failure?: SpanFailure;
+}
+
+/**
+ * The readable part of a failed span: `exception.type`, a message, and the
+ * stack when it says more than the message does.
+ */
+interface SpanFailure {
+  readonly type?: string;
+  readonly message: string;
+  readonly stack?: string;
 }
 
 @Component({
@@ -56,6 +68,25 @@ interface WaterfallRow {
             <span [class]="'status-' + row.span.StatusCode">{{ row.span.StatusCode }}</span>
             <span class="dim">{{ row.span.Timestamp | date: 'HH:mm:ss.SSS' }}</span>
           </div>
+
+          <!-- A span marked Error used to say only "Error", and the reason it
+               carried — the status message and the exception event — was
+               readable solely through the API. A service that ships no logs
+               (the streamer's Electron main process is one) then had a red bar
+               and nothing under it. -->
+          @if (row.failure; as failure) {
+            <div class="failure">
+              <p class="fx-m-0">
+                @if (failure.type) {
+                  <span class="exc-type mono">{{ failure.type }}</span>
+                }
+                <span class="exc-message">{{ failure.message }}</span>
+              </p>
+              @if (failure.stack) {
+                <pre class="stack mono">{{ failure.stack }}</pre>
+              }
+            </div>
+          }
         </li>
       } @empty {
         @if (!(loading$ | async)) {
@@ -163,6 +194,36 @@ interface WaterfallRow {
     .hint {
       color: var(--text-dim);
     }
+
+    /* Spans the whole row: the grid's three columns are the bar's, and the
+       reason belongs under all of them rather than in the duration's. */
+    .failure {
+      grid-column: 1 / -1;
+      margin-block-start: 0.3rem;
+      margin-inline-start: calc(var(--depth, 0) * var(--fx-s));
+      padding: 0.4rem 0.6rem;
+      border-inline-start: 2px solid var(--error);
+      background: var(--surface);
+      border-radius: 3px;
+      font-size: var(--fx-typography--1);
+    }
+
+    .exc-type {
+      color: var(--error);
+      margin-inline-end: 0.4rem;
+    }
+
+    .exc-message {
+      color: var(--text);
+    }
+
+    .stack {
+      margin: 0.4rem 0 0;
+      max-height: 14rem;
+      overflow: auto;
+      white-space: pre-wrap;
+      color: var(--text-dim);
+    }
   `,
 })
 export class TraceDetail {
@@ -268,6 +329,7 @@ function toWaterfall(spans: readonly Span[]): WaterfallRow[] {
       depth,
       offset: ((startOf(span) - origin) / total) * 100,
       width: Math.max((span.Duration / total) * 100, 0.4),
+      failure: failureOf(span),
     });
 
     for (const child of children.get(span.SpanId) ?? []) {
@@ -280,6 +342,46 @@ function toWaterfall(spans: readonly Span[]): WaterfallRow[] {
   }
 
   return out;
+}
+
+/**
+ * Why a span failed, from the two places the reason can be.
+ *
+ * `recordException` writes an `exception` event and `setStatus` writes the
+ * status message; most code here does both, but either can stand alone — a
+ * span can be set to Error without an exception, and an exception can be
+ * recorded on a span that still reports Unset. Both are shown.
+ *
+ * The first exception event wins. Later ones are usually the same failure
+ * re-thrown through a wrapper, and a span's first exception is the one that
+ * says where it started.
+ */
+function failureOf(span: Span): SpanFailure | undefined {
+  const index = (span.EventsName ?? []).indexOf('exception');
+  const event = index >= 0 ? (span.EventsAttributes?.[index] ?? {}) : {};
+
+  const type = str(event['exception.type']);
+  const message = str(event['exception.message']) || span.StatusMessage;
+  const stack = str(event['exception.stacktrace']);
+
+  if (span.StatusCode !== 'Error' && index < 0) {
+    return undefined;
+  }
+
+  // An Error with nothing attached is still worth marking — otherwise the row
+  // claims a failure and the panel under it stays empty, which is the thing
+  // this block exists to stop.
+  return {
+    type,
+    message: message || 'No message was recorded.',
+    // Node stringifies a bare Error to `Type: message`, so the stack is very
+    // often exactly what is already on the line above it.
+    stack: stack && stack !== message && stack !== `${type}: ${message}` ? stack : undefined,
+  };
+}
+
+function str(value: unknown): string {
+  return typeof value === 'string' ? value : value == null ? '' : String(value);
 }
 
 /** ClickHouse renders DateTime64(9) as `YYYY-MM-DD hh:mm:ss.nnnnnnnnn`; the

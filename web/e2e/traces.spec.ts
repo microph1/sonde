@@ -71,6 +71,53 @@ test.describe('traces', () => {
     await expect(page.locator('.chip.status-Error').first()).toHaveText('1 error');
   });
 
+  test('an errored span says why, not just that it failed', async ({ page, request }) => {
+    const service = uniqueService('reason');
+    const { traceId } = await seedTrace(request, service, {
+      status: 2,
+      name: 'GET /why',
+      statusMessage: 'TypeError: fetch failed',
+      exception: {
+        type: 'TypeError',
+        message: 'fetch failed',
+        stacktrace: 'TypeError: fetch failed\n    at node:internal/deps/undici/undici:13510:13',
+      },
+    });
+
+    await page.goto(`/all/traces/${traceId}?service=${service}`);
+
+    // The reason belongs on the span that failed, not in a panel of its own:
+    // a trace with twenty spans has one that broke, and the point is seeing
+    // which. The second row is the healthy child and stays bare.
+    const failing = page.locator('.waterfall li').first();
+    await expect(failing.locator('.exc-type')).toHaveText('TypeError');
+    await expect(failing.locator('.exc-message')).toHaveText('fetch failed');
+    await expect(failing.locator('.stack')).toContainText('undici');
+    await expect(page.locator('.waterfall li').nth(1).locator('.failure')).toHaveCount(0);
+  });
+
+  test('an errored span with no exception still shows its status message', async ({
+    page,
+    request,
+  }) => {
+    const service = uniqueService('bare');
+    const { traceId } = await seedTrace(request, service, {
+      status: 2,
+      name: 'GET /bare',
+      statusMessage: 'upstream returned 502',
+    });
+
+    // setStatus without recordException is normal — a swallowed failure that
+    // marks the span is the shape AGENTS.md asks for — and it must not render
+    // an empty box.
+    await page.goto(`/all/traces/${traceId}?service=${service}`);
+
+    const failing = page.locator('.waterfall li').first();
+    await expect(failing.locator('.exc-message')).toHaveText('upstream returned 502');
+    await expect(failing.locator('.exc-type')).toHaveCount(0);
+    await expect(failing.locator('.stack')).toHaveCount(0);
+  });
+
   test('the live tail announces itself before any row arrives', async ({ page }) => {
     // The interesting case: a quiet tail must still say it is live, because a
     // reducer only runs when its effect emits.
