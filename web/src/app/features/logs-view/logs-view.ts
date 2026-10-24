@@ -175,8 +175,9 @@ const SUMMARY_CHARS = 70;
 
           @if ((expanded$ | async)?.has($index)) {
             <tr class="detail">
-              <td></td>
-              <td colspan="6">
+              <!-- One cell across the whole row: the block is a panel under the
+                   record, not an entry in the Message column. -->
+              <td colspan="7">
                 <dl>
                   @for (field of attributes(record); track field.key) {
                     <div>
@@ -322,21 +323,31 @@ const SUMMARY_CHARS = 70;
 
     /* The same raised block a span opens to in the waterfall. A detail row the
        colour of the row above it has no edges of its own, so there is nothing
-       to say where one record's fields stop and the next record starts. */
+       to say where one record's fields stop and the next record starts.
+
+       Columns rather than one list down the left: four short fields on a table
+       this wide left a slab of empty surface three quarters of the way across,
+       which reads as a rendering fault rather than as a panel. They fill it
+       now, and a long value takes a column of its own. */
     tr.detail dl {
       display: grid;
-      grid-template-columns: max-content minmax(0, 1fr);
-      gap: 0.15rem var(--fx-s);
+      grid-template-columns: repeat(auto-fill, minmax(min(24rem, 100%), 1fr));
+      gap: 0.2rem var(--fx-m);
       margin: 0;
-      padding: 0.6rem 0.75rem;
+      padding: 0.5rem 0.7rem;
       border: 1px solid var(--line);
       border-radius: var(--mat-sys-corner-small);
       background: var(--surface-raised);
       box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
     }
 
+    /* Each pair keeps its own key column, so the keys line up down a column
+       without the values of a neighbouring one pushing them about. */
     tr.detail dl div {
-      display: contents;
+      display: grid;
+      grid-template-columns: minmax(5rem, max-content) minmax(0, 1fr);
+      gap: var(--fx-s);
+      align-items: baseline;
     }
 
     tr.detail dt,
