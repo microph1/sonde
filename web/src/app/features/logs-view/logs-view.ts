@@ -316,16 +316,23 @@ const SUMMARY_CHARS = 70;
     }
 
     tr.detail td {
-      background: var(--surface);
+      padding-block: 0 var(--fx-2xs);
       border-bottom: 1px solid var(--line);
     }
 
+    /* The same raised block a span opens to in the waterfall. A detail row the
+       colour of the row above it has no edges of its own, so there is nothing
+       to say where one record's fields stop and the next record starts. */
     tr.detail dl {
       display: grid;
       grid-template-columns: max-content minmax(0, 1fr);
       gap: 0.15rem var(--fx-s);
       margin: 0;
-      padding-block: var(--fx-2xs);
+      padding: 0.6rem 0.75rem;
+      border: 1px solid var(--line);
+      border-radius: var(--mat-sys-corner-small);
+      background: var(--surface-raised);
+      box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
     }
 
     tr.detail dl div {
