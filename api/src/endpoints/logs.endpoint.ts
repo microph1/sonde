@@ -61,6 +61,51 @@ export class LogsEndpoint {
   }
 
   /**
+   * The same search, counted per bucket and severity.
+   *
+   * The page could show the lines that matched and never the shape of them: a
+   * spike at 03:00 was something you found by scrolling, if you found it at
+   * all. Bounded by buckets × four levels rather than by row count, so this one
+   * is materialised rather than streamed.
+   *
+   * Every filter from the search applies — a chart of a different set than the
+   * table beneath it is worse than no chart.
+   */
+  @Lambda({ method: 'POST', path: '/logs/histogram' })
+  public async histogram(
+    @Body() filters: LogFilters & { bucketSeconds?: number } = {},
+  ): Promise<SeriesPoint[]> {
+    const params = {
+      ...baseParams(filters, this.maxLimit),
+      minSeverity: Math.max(0, Math.floor(filters.minSeverity ?? 0)),
+      contains: filters.contains ?? '',
+      traceId: filters.traceId ?? '',
+      scope: filters.scope ?? '',
+      // A hand-typed bucket could otherwise ask for a million one-second
+      // columns across a week.
+      bucket: Math.min(Math.max(Math.floor(filters.bucketSeconds ?? 300), 10), 24 * 60 * 60),
+    };
+
+    return this.clickhouse.rows<SeriesPoint>(
+      `SELECT toString(toStartOfInterval(Timestamp, INTERVAL {bucket:UInt32} SECOND)) AS bucket,
+              multiIf(SeverityNumber >= 17, 'error',
+                      SeverityNumber >= 13, 'warn',
+                      SeverityNumber >= 9, 'info',
+                      'debug') AS series,
+              count() AS value
+       FROM otel_logs
+       WHERE ${WINDOW_SQL}
+         AND SeverityNumber >= {minSeverity:Int32}
+         AND ({contains:String} = '' OR positionCaseInsensitive(Body, {contains:String}) > 0)
+         AND ({traceId:String} = '' OR TraceId = {traceId:String})
+         AND ({scope:String} = '' OR ScopeName = {scope:String})
+       GROUP BY bucket, series
+       ORDER BY bucket ASC`,
+      params,
+    );
+  }
+
+  /**
    * Live tail as server-sent events.
    *
    * A GET with filters in the query string because that is all `EventSource`
@@ -117,4 +162,11 @@ interface LogRecordRow {
   readonly ServiceName: string;
   readonly SpanId: string;
   readonly Body: string;
+}
+
+/** One column of the histogram: a bucket, a severity band, and how many. */
+export interface SeriesPoint {
+  readonly bucket: string;
+  readonly series: string;
+  readonly value: number;
 }

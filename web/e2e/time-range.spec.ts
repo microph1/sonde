@@ -15,11 +15,15 @@ test.describe('time range', () => {
 
     const now = new Date();
     const from = new Date(now.getTime() - 30 * 60_000);
+    // A few minutes ahead, because `datetime-local` has no sub-second part: a
+    // `to` of "now" truncates to the start of this second and can land just
+    // before the span that was seeded moments ago.
+    const to = new Date(now.getTime() + 5 * 60_000);
 
     await page.goto(`/all/traces?service=${service}`);
     await page.getByRole('button', { name: /Custom/ }).click();
     await page.locator('input[formcontrolname=from]').fill(local(from));
-    await page.locator('input[formcontrolname=to]').fill(local(now));
+    await page.locator('input[formcontrolname=to]').fill(local(to));
     await page.getByRole('button', { name: 'Apply' }).click();
 
     // The window is in the URL, which is the whole point: a view of a moment is

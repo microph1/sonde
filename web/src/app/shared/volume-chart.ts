@@ -55,7 +55,7 @@ const LABEL_CHARS = 17;
         <p class="empty">{{ empty() }}</p>
       } @else {
         <svg
-          [attr.viewBox]="viewBox"
+          [attr.viewBox]="viewBox()"
           role="img"
           [attr.aria-label]="title() + '. ' + describe()"
           (pointermove)="track($event)"
@@ -78,13 +78,13 @@ const LABEL_CHARS = 17;
           }
 
           @for (tick of timeTicks(); track tick.index) {
-            <text class="axis" [attr.x]="tick.x" [attr.y]="view.height - 8" text-anchor="middle">
+            <text class="axis" [attr.x]="tick.x" [attr.y]="height() - 8" text-anchor="middle">
               {{ tick.label }}
             </text>
           }
 
           @if (hover(); as point) {
-            <line class="crosshair" [attr.x1]="point.x" [attr.x2]="point.x" [attr.y1]="view.top" [attr.y2]="plotBottom" />
+            <line class="crosshair" [attr.x1]="point.x" [attr.x2]="point.x" [attr.y1]="view.top" [attr.y2]="plotBottom()" />
           }
 
           @for (line of series(); track line.name) {
@@ -92,8 +92,10 @@ const LABEL_CHARS = 17;
           }
 
           <!-- Direct labels while there are few enough to place without
-               collisions; the legend carries identity in every case. -->
-          @if (series().length <= 4) {
+               collisions; the legend carries identity in every case. A compact strip
+               skips them entirely: there is no room beside a 130-unit plot for
+               three labels that do not overlap each other or the axis. -->
+          @if (series().length <= 4 && !compact()) {
             @for (line of series(); track line.name) {
               <text class="direct" [attr.x]="plotRight + 8" [attr.y]="line.labelY + 4" [attr.fill]="line.color">
                 {{ shorten(line.name) }}
@@ -257,11 +259,23 @@ export class VolumeChart {
    * to subtract. */
   readonly empty = input('Nothing reported in this window.');
   readonly unit = input('per bucket');
+  /** Colour by series name, for series whose name carries a meaning the chart
+   * cannot infer — severity being the one that matters. */
+  readonly colors = input<Record<string, string>>({});
 
+  /**
+   * Shorter, for a chart that is a strip above something else rather than the
+   * thing you came to look at. The viewBox is what changes, so the whole plot
+   * follows: a chart squeezed by CSS alone would letterbox or stretch its
+   * labels.
+   */
+  readonly compact = input(false);
+
+  protected readonly height = computed(() => (this.compact() ? 130 : VIEW.height));
   protected readonly view = VIEW;
-  protected readonly viewBox = `0 0 ${VIEW.width} ${VIEW.height}`;
+  protected readonly viewBox = computed(() => `0 0 ${VIEW.width} ${this.height()}`);
   protected readonly plotRight = VIEW.width - VIEW.right;
-  protected readonly plotBottom = VIEW.height - VIEW.bottom;
+  protected readonly plotBottom = computed(() => this.height() - VIEW.bottom);
 
   protected readonly hover = signal<{
     x: number;
@@ -317,7 +331,10 @@ export class VolumeChart {
       // is what it is.
       name: name || this.title(),
       total,
-      color: SERIES_COLORS[slot],
+      // A caller that knows what its series mean can say so: `error` has to be
+      // red wherever it appears, and a palette handed out by rank would colour
+      // it by how much of it there happened to be.
+      color: this.colors()[name] ?? SERIES_COLORS[slot],
       values: rows.get(name) ?? [],
     }));
 
@@ -492,7 +509,7 @@ export class VolumeChart {
   }
 
   private y(value: number, max: number): number {
-    return this.plotBottom - (value / max) * (this.plotBottom - VIEW.top);
+    return this.plotBottom() - (value / max) * (this.plotBottom() - VIEW.top);
   }
 }
 

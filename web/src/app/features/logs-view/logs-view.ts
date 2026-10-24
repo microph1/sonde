@@ -10,12 +10,13 @@ import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { PageHeader } from '../../shared/page-header';
 import { TimeRangePicker } from '../../shared/time-range-picker';
+import { VolumeChart } from '../../shared/volume-chart';
 import { BehaviorSubject, distinctUntilChanged, map, startWith, skip } from 'rxjs';
 
 import { AppScope } from '../../core/app-scope';
 import { LogsStore } from '../../core/logs.store';
 import { DEFAULT_RANGE, Range } from '../../core/services.store';
-import { fromParams, resolve, sameRange } from '../../core/time-range';
+import { bucketOf, fromParams, resolve, sameRange } from '../../core/time-range';
 import { LogFilters, LogRecord } from '../../core/telemetry.model';
 
 /** How much of a record's fields fits on one line before it stops being a
@@ -28,7 +29,7 @@ const SUMMARY_CHARS = 70;
 
 @Component({
   selector: 'wt-logs-view',
-  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule, PageHeader, TimeRangePicker],
+  imports: [ReactiveFormsModule, RouterLink, AsyncPipe, DatePipe, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule, PageHeader, TimeRangePicker, VolumeChart],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <wt-page-header
@@ -94,6 +95,24 @@ const SUMMARY_CHARS = 70;
       }
       {{ (rows$ | async)?.length ?? 0 }} records{{ (searching$ | async) ? ' — streaming…' : '' }}
     </p>
+
+    <!-- The shape of the search, above the lines that matched. A list cannot
+         tell you that all of it happened in ninety seconds at 03:00 — and with
+         a limit on the rows, the list is usually not even all of it. Hidden
+         during a tail, where the window is "now" and the chart would be one
+         column tall. -->
+    @if ((live$ | async) !== true) {
+      <div class="shape fx-mb-4">
+        <wt-volume-chart
+          [points]="(histogram$ | async) ?? []"
+          [colors]="severityColors"
+          title="Records"
+          [unit]="'per ' + bucketLabel()"
+          empty="Nothing matched in this window."
+          [compact]="true"
+        />
+      </div>
+    }
 
     <table>
       <caption class="sr-only">Matching log records</caption>
@@ -349,6 +368,16 @@ export class LogsView implements OnInit {
   private range: Range = fromParams(this.route.snapshot.queryParamMap) ?? DEFAULT_RANGE;
 
   protected readonly rows$ = this.store.rows$;
+  protected readonly histogram$ = this.store.histogram$;
+
+  /** Severity has a meaning the chart cannot infer; error is red wherever it
+   * appears, not red because there happened to be a lot of it. */
+  protected readonly severityColors: Record<string, string> = {
+    error: '#e5484d',
+    warn: '#d9930a',
+    info: '#3987e5',
+    debug: '#6b7686',
+  };
   protected readonly live$ = this.store.live$;
   protected readonly searching$ = this.store.getLoadingFor('search').pipe(startWith(false));
 
@@ -391,7 +420,17 @@ export class LogsView implements OnInit {
   }
 
   protected run(): void {
-    this.store.dispatch('search', this.currentFilters());
+    const filters = this.currentFilters();
+
+    this.store.dispatch('search', filters);
+    // The same filters, so the chart is of the set in the table rather than of
+    // something adjacent to it.
+    this.store.dispatch('histogram', { ...filters, bucketSeconds: bucketOf(this.range).seconds });
+  }
+
+  /** What the chart's columns are each worth, for the caption. */
+  protected bucketLabel(): string {
+    return bucketOf(this.range).label;
   }
 
   protected startLive(): void {
