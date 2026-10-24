@@ -32,6 +32,7 @@ export default defineConfig({
   },
   projects: [
     { name: 'setup', testMatch: /login\.setup\.ts/ },
+    { name: 'cleanup', testMatch: /cleanup\.teardown\.ts/ },
     {
       name: 'console',
       dependencies: ['setup'],
@@ -40,6 +41,11 @@ export default defineConfig({
       // redirected and a request carrying the cookie is not refused, so both
       // fail while the guard is working exactly as intended.
       testIgnore: /anonymous\.spec\.ts/,
+      // Whatever it seeded is deleted afterwards, pass or fail. Nothing ever
+      // removed it before and a development stack reached 139 `e2e-*`
+      // services, which left the map — a node per service — unreadable and a
+      // node too small to click.
+      teardown: 'cleanup',
       use: { ...devices['Desktop Chrome'], storageState: 'e2e/.auth/session.json' },
     },
     {

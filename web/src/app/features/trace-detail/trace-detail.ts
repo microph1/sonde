@@ -145,7 +145,7 @@ interface SpanFailure {
                     <li>
                       <span class="at dim">+{{ event.at | number: '1.0-1' }} ms</span>
                       <span class="event-name mono">{{ event.name }}</span>
-                      <span class="event-fields dim mono">
+                      <span class="event-fields dim mono" [title]="describe(event)">
                         @for (field of event.fields; track field.key) {
                           {{ field.key }}={{ field.value }}
                         }
@@ -238,6 +238,13 @@ interface SpanFailure {
       color: var(--accent);
     }
 
+    /* Inside the row rather than around it: the label is as wide as the
+       column, so a ring with the usual offset draws a box across the span. */
+    .label:focus-visible {
+      outline-offset: -2px;
+      border-radius: 3px;
+    }
+
     .chevron {
       flex: none;
       width: 0.8em;
@@ -294,13 +301,24 @@ interface SpanFailure {
 
     .events li {
       display: grid;
-      grid-template-columns: 5rem minmax(6rem, max-content) minmax(0, 1fr);
+      grid-template-columns: 6rem minmax(6rem, max-content) minmax(0, 1fr);
       gap: 0.6rem;
+      padding-block: 0.1rem;
+      align-items: baseline;
     }
 
     .events .at {
       text-align: end;
+      white-space: nowrap;
       font-variant-numeric: tabular-nums;
+    }
+
+    /* One line each. A field set that wraps turns the column of offsets into a
+       ragged block and the marks stop being readable as a sequence. */
+    .event-fields {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .service {
@@ -425,8 +443,19 @@ export class TraceDetail {
   ]).pipe(
     map(([records, spans]) => {
       const names = new Map(spans.map((span) => [span.SpanId, span.SpanName]));
+      const asEvents = new Set(
+        spans.flatMap((span) =>
+          (span.EventsName ?? []).map((name, index) => key(span.SpanId, name, span.EventsTimestamp?.[index])),
+        ),
+      );
 
       return [...records]
+        // A `tracing` event becomes both a span event and a log record, so a
+        // Rust service was showing every line of its own session twice: once
+        // under the span that emitted it and again in the panel below. The
+        // event keeps its place — it is attached to the step it happened in,
+        // which the flat list cannot say.
+        .filter((record) => !asEvents.has(key(record.SpanId, record.Body, record.Timestamp)))
         .sort((a, b) => a.Timestamp.localeCompare(b.Timestamp))
         .map((record) => ({
           record,
@@ -438,6 +467,12 @@ export class TraceDetail {
         }));
     }),
   );
+
+  /** The whole field set, for the title of a line that shows as much of it as
+   * fits. */
+  protected describe(event: { fields: Field[] }): string {
+    return event.fields.map((field) => `${field.key}=${field.value}`).join(' ');
+  }
 
   protected toggle(spanId: string): void {
     const open = new Set(this.open$$.value);
@@ -554,6 +589,12 @@ function str(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
 }
 
+/** What makes a span event and a log record the same thing: the same span said
+ * the same words at the same millisecond. */
+function key(spanId: string, text: string, timestamp: string | undefined): string {
+  return `${spanId}|${text}|${(timestamp ?? '').slice(0, 23)}`;
+}
+
 /** The first of these keys that the span actually carries. */
 function pick(attributes: Attributes, ...keys: string[]): string {
   for (const key of keys) {
@@ -647,6 +688,7 @@ function eventsOf(span: Span): SpanEvent[] {
   const names = span.EventsName ?? [];
   const times = span.EventsTimestamp ?? [];
   const attributes = span.EventsAttributes ?? [];
+  const own = span.SpanAttributes ?? {};
   const start = startOf(span);
 
   return names
@@ -655,8 +697,31 @@ function eventsOf(span: Span): SpanEvent[] {
     .map(({ name, index }) => ({
       name,
       at: times[index] ? (nanosOf(times[index]) - start) / 1e6 : 0,
-      fields: fieldsOf(attributes[index] ?? {}),
+      // Minus whatever the span already says. A `tracing` event carries its
+      // callsite — `code.file.path`, `code.line.number`, `code.module.name`,
+      // `target` — on every single one, and repeated down a column they bury
+      // the one field per line that differs. Dropped only where the value is
+      // identical to the span's, so an event that moved to another callsite
+      // still says so.
+      fields: plumbingLast(
+        fieldsOf(attributes[index] ?? {}).filter((field) => str(own[field.key]) !== field.value),
+      ),
     }));
+}
+
+/** Where the line came from, rather than what it says. */
+const PLUMBING = ['code.', 'thread.', 'target', 'level', 'busy_ns', 'idle_ns'];
+
+/**
+ * Alphabetical is the right order for a table you scan by key and the wrong one
+ * for a line you read: it put `code.line.number=106 level=INFO` in front of
+ * `topic=dcavaliere@microgamma.io` on every event. The callsite goes to the
+ * back — still there, still true, no longer first.
+ */
+function plumbingLast(fields: Field[]): Field[] {
+  const rank = (field: Field) => (PLUMBING.some((prefix) => field.key.startsWith(prefix)) ? 1 : 0);
+
+  return [...fields].sort((a, b) => rank(a) - rank(b));
 }
 
 /** A content length is unreadable in bytes past about a kilobyte, and reading
