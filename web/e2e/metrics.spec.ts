@@ -55,6 +55,15 @@ test.describe('metrics', () => {
     await expect(page.locator('.window')).toContainText('fastest');
     await expect(page.locator('.window')).toContainText('worst');
 
+    // The question a percentile raises and cannot answer: which ones. There
+    // are no exemplars in this data, so the link is built from what the metric
+    // does say — its service, its window, and the line on the chart.
+    const traces = page.locator('.window a');
+
+    await expect(traces).toContainText('traces slower than');
+    await expect(traces).toHaveAttribute('href', new RegExp(`service=${service}`));
+    await expect(traces).toHaveAttribute('href', /minDurationMs=\d+/);
+
     // A distribution has no single value, so the line is always a choice.
     await expect(page.getByRole('radio', { name: 'p99' })).toBeVisible();
     await page.getByRole('radio', { name: 'p50' }).click();

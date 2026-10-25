@@ -8,7 +8,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { combineLatest, distinctUntilChanged, map, startWith, skip } from 'rxjs';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 
 import { AppScope } from '../../core/app-scope';
 import { Member, MetricOverview, MetricSummary, MetricsStore } from '../../core/metrics.store';
@@ -143,6 +143,7 @@ function share(value: number, of: number): string {
     VolumeChart,
     Sparkline,
     TimeRangePicker,
+    RouterLink,
     MatButtonToggleModule,
     MatFormFieldModule,
     MatSelectModule,
@@ -251,6 +252,17 @@ function share(value: number, of: number): string {
               <span class="dim">mean <strong>{{ format(metric, window.mean) }}</strong></span>
               <span class="dim">fastest <strong>{{ format(metric, window.smallest) }}</strong></span>
               <span class="dim">worst <strong>{{ format(metric, window.largest) }}</strong></span>
+
+              <!-- The question a percentile raises and cannot answer: which
+                   ones. There are no exemplars in this data, so the link is
+                   built from what the metric does say — its service, its
+                   window and the reading on the chart — rather than pretending
+                   to know the exact spans behind the number. -->
+              @if (slowTraces(metric, window, (points$ | async) ?? []); as link) {
+                <a [routerLink]="scope.link('traces')" [queryParams]="link.params">
+                  traces slower than {{ link.label }}
+                </a>
+              }
             </p>
           }
         }
@@ -491,7 +503,7 @@ function share(value: number, of: number): string {
 })
 export class MetricsView implements OnInit {
   private readonly store = inject(MetricsStore);
-  private readonly scope = inject(AppScope);
+  protected readonly scope = inject(AppScope);
   private readonly route = inject(ActivatedRoute);
 
   protected readonly overview$ = this.store.overview$;
@@ -798,6 +810,46 @@ export class MetricsView implements OnInit {
     }
 
     return count;
+  }
+
+  /**
+   * Where to look for the spans a duration percentile is describing.
+   *
+   * Only for a duration histogram reported by exactly one service: the link
+   * is an inference from the service, the window and the reading on the
+   * chart, and widening it past those would be guessing. Nothing in this data
+   * says which spans went into a bucket - OTLP exemplars would, and the
+   * receiver stores none.
+   */
+  protected slowTraces(
+    metric: MetricOverview,
+    window: { services: string[] },
+    points: readonly { value: number }[],
+  ): { params: Record<string, string>; label: string } | null {
+    const ms = metric.unit === 'ms' ? 1 : metric.unit === 's' ? 1000 : 0;
+
+    if (metric.kind !== 'histogram' || !ms || window.services.length !== 1) {
+      return null;
+    }
+
+    // The middle of the drawn line rather than its last point: the last
+    // bucket is whatever happened in the last few minutes, and on a quiet one
+    // it sets a threshold that matches nearly every span. The median of the
+    // line is what the line typically says.
+    const values = points.map((point) => point.value).sort((a, b) => a - b);
+    const typical = values[Math.floor(values.length / 2)] ?? 0;
+
+    if (typical <= 0) {
+      return null;
+    }
+
+    return {
+      params: {
+        service: window.services[0],
+        minDurationMs: String(Math.round(typical * ms)),
+      },
+      label: this.format(metric, typical),
+    };
   }
 
   /** One value in the instrument's own unit, for the window summary. */

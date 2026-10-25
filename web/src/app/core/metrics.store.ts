@@ -101,6 +101,8 @@ export interface Filter {
 /** The attribute keys a metric carries, and the values each has taken. */
 /** What a window held, from the numbers a histogram reports outright. */
 export interface MetricWindowSummary {
+  /** Which services reported it, so a reader can be sent to their traces. */
+  readonly services: string[];
   readonly observations: number;
   readonly mean: number;
   readonly smallest: number;

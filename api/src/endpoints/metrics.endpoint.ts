@@ -63,6 +63,8 @@ export interface MetricQuery extends SearchFilters {
 
 /** What a window held, from the numbers the instrument reports outright. */
 export interface MetricWindowSummary {
+  /** Which services reported it, so a reader can be sent to their traces. */
+  readonly services: string[];
   readonly observations: number;
   readonly mean: number;
   readonly smallest: number;
@@ -451,6 +453,7 @@ export class MetricsEndpoint {
       // rather than the bucket array: a total that fell is a restart, and a
       // stream's first export in the window counts for nothing.
       `SELECT sum(countStep) AS observations,
+              arraySlice(arraySort(groupUniqArray(service)), 1, 10) AS services,
               if(observations > 0, sum(sumStep) / observations, 0) AS mean,
               min(smallest) AS smallest,
               max(largest) AS largest
@@ -461,14 +464,15 @@ export class MetricsEndpoint {
                 multiIf(position = 1, 0,
                         total >= previousTotal, amount - previousAmount,
                         amount) AS sumStep,
-                smallest, largest
+                smallest, largest, service
          FROM (
-           SELECT total, amount, smallest, largest,
+           SELECT total, amount, smallest, largest, service,
                   lagInFrame(total) OVER stream AS previousTotal,
                   lagInFrame(amount) OVER stream AS previousAmount,
                   row_number() OVER stream AS position
            FROM (
              SELECT Timestamp,
+                    ServiceName AS service,
                     concat(ServiceName, '\\0',
                            ResourceAttributes['service.instance.id'], '\\0',
                            toString(Attributes)) AS stream_id,
@@ -490,7 +494,7 @@ export class MetricsEndpoint {
       params,
     );
 
-    return row ?? { observations: 0, mean: 0, smallest: 0, largest: 0 };
+    return row ?? { observations: 0, mean: 0, smallest: 0, largest: 0, services: [] };
   }
 
   /**
