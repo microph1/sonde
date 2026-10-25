@@ -29,7 +29,16 @@ test.describe('metrics', () => {
     await seedHistogram(request, service, `${family}.duration`);
 
     await page.goto('/all/metrics?range=1h');
-    await page.locator('.card', { hasText: family }).click();
+
+    const card = page.locator('.card', { hasText: family });
+
+    // The card reports the same reading the chart opens on. It used to say
+    // `rate 0/s`, which answers a question nobody asked of an instrument whose
+    // purpose is how long things take.
+    await expect(card).toContainText('p95');
+    await expect(card).not.toContainText('/s');
+
+    await card.click();
 
     // Every histogram used to answer `Unknown identifier 'Value'` and draw a
     // flat line at zero, silently: the detail query asked a column the table

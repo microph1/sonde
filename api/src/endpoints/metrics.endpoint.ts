@@ -222,31 +222,79 @@ const SUM_OVERVIEW_SQL = `
   ORDER BY name, bucket
 `;
 
-/** A histogram's count is cumulative like a counter's, so the card shows the
- * same thing a counter's does: observations per second. */
+/**
+ * A histogram's card shows the same reading its chart does: a percentile.
+ *
+ * It used to show observations per second, because a histogram's count is
+ * cumulative like a counter's and that was the reading to hand. But a
+ * `musicbox.action.duration` card reading `rate 0/s` answers a question nobody
+ * asked about an instrument whose whole purpose is how long things take — and
+ * it read zero most of the time anyway, since a few calls a minute round to
+ * nothing per second.
+ *
+ * The arithmetic is the detail chart's, collapsed across every series: see
+ * `distribution`, which explains the cumulative difference, the restart and
+ * the clamp to what was observed.
+ */
+/** The percentile a card reports. The same one the detail chart opens on, so
+ * the number on the card and the line you click through to agree. */
+const CARD_QUANTILE = 0.95;
+
 const HISTOGRAM_OVERVIEW_SQL = `
-  SELECT name, 'histogram' AS kind, toString(bucket) AS bucket, value, position, 1 AS dropFirst
+  SELECT name, 'histogram' AS kind, toString(bucket) AS bucket, value,
+         1 AS position, 0 AS dropFirst
   FROM (
-    SELECT name, bucket, position,
-           greatest(0, total - previous) / {bucket:UInt32} AS value
+    SELECT name, bucket,
+           arrayCumSum(counts) AS cumulative,
+           cumulative[length(cumulative)] AS total,
+           total * ${CARD_QUANTILE} AS target,
+           arrayFirstIndex(x -> x >= target, cumulative) AS at,
+           if(at <= 1, 0, cumulative[at - 1]) AS before,
+           if(at <= 1, 0, bounds[at - 1]) AS lower,
+           if(at > length(bounds), bounds[length(bounds)], bounds[at]) AS upper,
+           if(cumulative[at] = before,
+              upper,
+              lower + (upper - lower) * (target - before) / (cumulative[at] - before)) AS raw,
+           least(greatest(raw, if(minSeen > 0, minSeen, raw)),
+                 if(maxSeen > 0, maxSeen, raw)) AS value
     FROM (
-      SELECT name, bucket, total,
-             lagInFrame(total) OVER (PARTITION BY name ORDER BY bucket) AS previous,
-             row_number() OVER (PARTITION BY name ORDER BY bucket) AS position
+      SELECT name, bucket, any(bounds) AS bounds, sumForEach(step) AS counts,
+             max(largest) AS maxSeen, min(smallest) AS minSeen
       FROM (
-        SELECT name, bucket, sum(peak) AS total
+        SELECT name,
+               toStartOfInterval(Timestamp, INTERVAL {bucket:UInt32} SECOND) AS bucket,
+               bounds, largest, smallest,
+               multiIf(
+                 position = 1, arrayMap(x -> 0., counts),
+                 total >= previousTotal,
+                   arrayMap((now, then) -> greatest(0, now - then), counts, previous),
+                 counts
+               ) AS step
         FROM (
-          SELECT MetricName AS name,
-                 toStartOfInterval(Timestamp, INTERVAL {bucket:UInt32} SECOND) AS bucket,
-                 Attributes,
-                 max(Count) AS peak
-          FROM ${TABLES.histogram}
-          WHERE ${OVERVIEW_WINDOW}
-          GROUP BY name, bucket, Attributes
+          SELECT Timestamp, name, bounds, largest, smallest, counts, total,
+                 lagInFrame(counts) OVER stream AS previous,
+                 lagInFrame(total) OVER stream AS previousTotal,
+                 row_number() OVER stream AS position
+          FROM (
+            SELECT Timestamp,
+                   MetricName AS name,
+                   concat(ServiceName, '\\0',
+                          ResourceAttributes['service.instance.id'], '\\0',
+                          toString(Attributes)) AS stream_id,
+                   ExplicitBounds AS bounds,
+                   toFloat64(Max) AS largest,
+                   toFloat64(Min) AS smallest,
+                   arrayMap(x -> toFloat64(x), BucketCounts) AS counts,
+                   toFloat64(Count) AS total
+            FROM ${TABLES.histogram}
+            WHERE ${OVERVIEW_WINDOW}
+          )
+          WINDOW stream AS (PARTITION BY name, stream_id ORDER BY Timestamp)
         )
-        GROUP BY name, bucket
       )
+      GROUP BY name, bucket
     )
+    WHERE total > 0
   )
   ORDER BY name, bucket
 `;

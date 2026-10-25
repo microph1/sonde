@@ -706,7 +706,16 @@ export class MetricsView implements OnInit {
    * the card is the difference between a number and a number you can trust.
    */
   protected reading(metric: MetricSummary): string {
-    if (metric.kind === 'histogram' || (metric.kind === 'sum' && metric.monotonic)) {
+    // A histogram reports the same percentile its chart opens on, so the number
+    // on the card and the line you click through to are the same reading. It
+    // used to say , which answered a question nobody asked of an
+    // instrument whose purpose is how long things take - and read 0/s most of
+    // the time, because a few calls a minute round to nothing per second.
+    if (metric.kind === 'histogram') {
+      return 'p95';
+    }
+
+    if (metric.kind === 'sum' && metric.monotonic) {
       return 'rate';
     }
 
@@ -746,16 +755,14 @@ export class MetricsView implements OnInit {
   /**
    * Bytes read as bytes, seconds as time, everything else as a plain number.
    *
-   * A histogram is the exception: its card reads observations per second, and
-   * a count of observations is not measured in the unit of the thing observed.
-   * Formatting the rate of `http.server.request.duration` in milliseconds gave
-   * a card reading "microseconds per second", which is not a quantity.
+   * A histogram is formatted like anything else now. It used to be counted
+   * rather than measured, because its card read observations per second and a
+   * count of observations is not in the unit of the thing observed: the rate
+   * of a request duration, formatted as milliseconds, read "microseconds per
+   * second", which is not a quantity. The card reports a duration now, so the
+   * unit is the instrument's own.
    */
   protected formatter(metric: MetricSummary): (value: number) => string {
-    if (metric.kind === 'histogram') {
-      return count;
-    }
-
     if (metric.unit === 'By') {
       return bytes;
     }
@@ -768,7 +775,13 @@ export class MetricsView implements OnInit {
   }
 
   protected unitLabel(metric: MetricSummary): string {
-    return metric.kind === 'sum' ? 'per second' : metric.unit || 'value';
+    if (metric.kind === 'sum') {
+      return 'per second';
+    }
+
+    // A histogram's line is a percentile of the instrument's own unit, which
+    // is what makes "ms" the honest caption rather than "value".
+    return metric.unit || 'value';
   }
 }
 
