@@ -193,34 +193,32 @@ export class MetricsStore
       this.percentile$,
       this.split$,
       this.where$,
-    ]).subscribe(
-      ([metric, members, labels, range, rate, percentile, split, where]) => {
-        if (metric) {
-          this.dispatch('loadSeries', {
-            members: members.length ? members : [metric],
-            labels,
-            range,
-            rate,
-            percentile,
-            split,
-            where,
-          });
-          this.dispatch('loadWindow', {
-            members: members.length ? members : [metric],
-            labels,
-            range,
-            rate,
-            percentile,
-            split,
-            where,
-          });
-          this.dispatch('loadReference', metric);
-          // The keys a split or a filter can be made of come from the metric
-          // and the window, so they are reloaded with either.
-          this.dispatch('loadFacets', metric);
-        }
-      },
-    );
+    ]).subscribe(([metric, members, labels, range, rate, percentile, split, where]) => {
+      if (metric) {
+        this.dispatch('loadSeries', {
+          members: members.length ? members : [metric],
+          labels,
+          range,
+          rate,
+          percentile,
+          split,
+          where,
+        });
+        this.dispatch('loadWindow', {
+          members: members.length ? members : [metric],
+          labels,
+          range,
+          rate,
+          percentile,
+          split,
+          where,
+        });
+        this.dispatch('loadReference', metric);
+        // The keys a split or a filter can be made of come from the metric
+        // and the window, so they are reloaded with either.
+        this.dispatch('loadFacets', metric);
+      }
+    });
 
     // Every card is drawn over the same window as the chart above it, so the
     // overview follows the range for the same reason the series does. `skip(1)`
@@ -298,7 +296,7 @@ export class MetricsStore
       selected: selection.lead,
       members: selection.members,
       labels: selection.labels,
-      rate: selection.lead.kind === 'sum' && selection.lead.monotonic === 1,
+      rate: isCounter(selection.lead),
       // A different metric carries different attributes, so a split or a
       // filter made of the last one's keys would quietly match nothing.
       facets: [],
@@ -511,7 +509,21 @@ export class MetricsStore
       overview[0] ??
       null;
 
-    return { ...state, overview, catalogue: overview, selected };
+    // The reading has to follow the instrument, exactly as it does when a card
+    // is clicked. Choosing a default here and leaving `rate` alone opened the
+    // page on a cumulative counter plotted raw - `container.cpu.time` as a
+    // flat line at 1,378 seconds, which is the number the counter happens to
+    // have reached rather than anything worth looking at.
+    const changed =
+      selected?.name !== state.selected?.name || selected?.kind !== state.selected?.kind;
+
+    return {
+      ...state,
+      overview,
+      catalogue: overview,
+      selected,
+      rate: changed ? isCounter(selected) : state.rate,
+    };
   }
 
   private snapshot(): MetricsState {
@@ -594,4 +606,10 @@ function moves(metric: MetricOverview): boolean {
   const values = metric.points.map((point) => point.value);
 
   return values.some((value) => value > 0) && new Set(values).size > 2;
+}
+
+/** A cumulative counter, whose only sane reading is a rate: the raw total is
+ * whatever it has climbed to since the process started. */
+function isCounter(metric: MetricSummary | null): boolean {
+  return metric?.kind === 'sum' && metric.monotonic === 1;
 }

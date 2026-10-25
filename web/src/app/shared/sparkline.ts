@@ -20,7 +20,12 @@ const VIEW = { width: 240, height: 44, pad: 3 };
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (path(); as d) {
-      <svg [attr.viewBox]="viewBox" preserveAspectRatio="none" role="img" [attr.aria-label]="label()">
+      <svg
+        [attr.viewBox]="viewBox"
+        preserveAspectRatio="none"
+        role="img"
+        [attr.aria-label]="label()"
+      >
         <path class="area" [attr.d]="area()" />
         <path class="line" [attr.d]="d" />
         @if (last(); as point) {
@@ -105,9 +110,19 @@ export class Sparkline {
     const range = top - bottom || 1;
     const usable = VIEW.height - VIEW.pad * 2;
 
+    // Where the series stopped reporting. The sparkline is not told the bucket
+    // width, so it takes the usual step between readings and calls anything
+    // much larger a gap: the card used to draw one straight line across eleven
+    // hours of a stopped container, while the chart it links to broke there,
+    // and the two disagreeing is what made the chart look broken.
+    const steps = times.slice(1).map((time, index) => time - times[index]);
+    const usual =
+      steps.length > 0 ? [...steps].sort((a, b) => a - b)[Math.floor(steps.length / 2)] : 0;
+
     return points.map((point, index) => ({
       x: points.length === 1 ? VIEW.width : ((times[index] - start) / span) * VIEW.width,
       y: VIEW.pad + usable - ((point.value - bottom) / range) * usable,
+      after: index > 0 && usual > 0 && times[index] - times[index - 1] > usual * 2.5,
     }));
   });
 
@@ -122,22 +137,46 @@ export class Sparkline {
       return `M0 ${plotted[0].y}L${VIEW.width} ${plotted[0].y}`;
     }
 
-    return plotted.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x} ${point.y}`).join('');
+    // `M` again after a gap, so the line lifts rather than striding across it.
+    return plotted
+      .map((point, index) => `${index === 0 || point.after ? 'M' : 'L'}${point.x} ${point.y}`)
+      .join('');
   });
 
+  /** One closed shape per stretch of reporting. Closing the whole path at once
+   * drew a triangle across every gap, filling in hours the series was silent
+   * for — the line lifted and the fill did not. */
   protected readonly area = computed(() => {
-    const line = this.path();
+    const plotted = this.plotted();
 
-    if (!line) {
+    if (plotted.length === 0) {
       return '';
     }
 
-    const plotted = this.plotted();
-    const first = plotted[0];
-    const last = plotted[plotted.length - 1];
-    const lastX = plotted.length === 1 ? VIEW.width : last.x;
+    if (plotted.length === 1) {
+      return `M0 ${plotted[0].y}L${VIEW.width} ${plotted[0].y}L${VIEW.width} ${VIEW.height}L0 ${VIEW.height}Z`;
+    }
 
-    return `${line}L${lastX} ${VIEW.height}L${first.x} ${VIEW.height}Z`;
+    const runs: { x: number; y: number }[][] = [];
+
+    for (const point of plotted) {
+      if (point.after || runs.length === 0) {
+        runs.push([]);
+      }
+
+      runs[runs.length - 1].push(point);
+    }
+
+    return runs
+      .filter((run) => run.length > 1)
+      .map((run) => {
+        const line = run
+          .map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x} ${point.y}`)
+          .join('');
+
+        return `${line}L${run[run.length - 1].x} ${VIEW.height}L${run[0].x} ${VIEW.height}Z`;
+      })
+      .join('');
   });
 
   protected readonly last = computed(() => this.plotted().at(-1) ?? null);

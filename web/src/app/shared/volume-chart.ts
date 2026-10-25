@@ -36,6 +36,8 @@ interface Series {
   readonly labelY: number;
   /** The same shape closed to the baseline, when the chart draws a fill. */
   readonly area: string;
+  /** Readings with no neighbour to join, which a path cannot show. */
+  readonly dots: readonly (readonly [number, number])[];
 }
 
 /**
@@ -84,14 +86,26 @@ const LABEL_CHARS = 17;
           <!-- Recessive grid: present enough to read a value against, quiet
                enough that the data stays the loudest thing on screen. -->
           @for (line of gridLines(); track line.value) {
-            <line class="grid" [attr.x1]="view.left" [attr.x2]="plotRight()" [attr.y1]="line.y" [attr.y2]="line.y" />
+            <line
+              class="grid"
+              [attr.x1]="view.left"
+              [attr.x2]="plotRight()"
+              [attr.y1]="line.y"
+              [attr.y2]="line.y"
+            />
             <text class="axis" [attr.x]="view.left - 8" [attr.y]="line.y + 4" text-anchor="end">
               {{ line.label }}
             </text>
           }
 
           @if (referenceLine(); as line) {
-            <line class="reference" [attr.x1]="view.left" [attr.x2]="plotRight()" [attr.y1]="line.y" [attr.y2]="line.y" />
+            <line
+              class="reference"
+              [attr.x1]="view.left"
+              [attr.x2]="plotRight()"
+              [attr.y1]="line.y"
+              [attr.y2]="line.y"
+            />
             <text class="axis reference-label" [attr.x]="plotRight() + 8" [attr.y]="line.y + 4">
               {{ line.label }}
             </text>
@@ -104,7 +118,13 @@ const LABEL_CHARS = 17;
           }
 
           @if (hover(); as point) {
-            <line class="crosshair" [attr.x1]="point.x" [attr.x2]="point.x" [attr.y1]="view.top" [attr.y2]="plotBottom()" />
+            <line
+              class="crosshair"
+              [attr.x1]="point.x"
+              [attr.x2]="point.x"
+              [attr.y1]="view.top"
+              [attr.y2]="plotBottom()"
+            />
           }
 
           @for (line of series(); track line.name) {
@@ -121,6 +141,16 @@ const LABEL_CHARS = 17;
               <path class="area" [attr.d]="line.area" [attr.fill]="'url(#' + fillId + ')'" />
             }
             <path class="series" [attr.d]="line.path" [attr.stroke]="line.color" />
+
+            @for (dot of line.dots; track $index) {
+              <circle
+                class="lone"
+                [attr.cx]="dot[0]"
+                [attr.cy]="dot[1]"
+                [attr.fill]="line.color"
+                r="2.5"
+              />
+            }
           }
 
           <!-- Direct labels only where they can be placed without fighting:
@@ -130,7 +160,12 @@ const LABEL_CHARS = 17;
                strip has no room for them at all. -->
           @if (labelled()) {
             @for (line of series(); track line.name) {
-              <text class="direct" [attr.x]="plotRight() + 8" [attr.y]="line.labelY + 4" [attr.fill]="line.color">
+              <text
+                class="direct"
+                [attr.x]="plotRight() + 8"
+                [attr.y]="line.labelY + 4"
+                [attr.fill]="line.color"
+              >
                 {{ shorten(line.name) }}
               </text>
             }
@@ -150,7 +185,11 @@ const LABEL_CHARS = 17;
         </svg>
 
         @if (hover(); as point) {
-          <div class="tooltip" [style.left.%]="point.left" [style.transform]="point.flip ? 'translateX(-100%)' : ''">
+          <div
+            class="tooltip"
+            [style.left.%]="point.left"
+            [style.transform]="point.flip ? 'translateX(-100%)' : ''"
+          >
             <strong>{{ point.label }}</strong>
             @for (mark of point.marks; track mark.name) {
               <span class="row">
@@ -162,11 +201,18 @@ const LABEL_CHARS = 17;
           </div>
         }
 
-        <ul class="legend fx-flex fx-flex-wrap fx-gap-3 fx-m-0 fx-p-0 fx-mt-2">
-          @for (line of series(); track line.name) {
-            <li class="fx-flex fx-items-center fx-gap-1"><span class="swatch" [style.background]="line.color"></span>{{ line.name }}</li>
-          }
-        </ul>
+        <!-- A compact chart has one line and something above it already
+             saying whose it is; a legend under each panel of a grid is the
+             same word printed twice. -->
+        @if (!compact() || series().length > 1) {
+          <ul class="legend fx-flex fx-flex-wrap fx-gap-3 fx-m-0 fx-p-0 fx-mt-2">
+            @for (line of series(); track line.name) {
+              <li class="fx-flex fx-items-center fx-gap-1">
+                <span class="swatch" [style.background]="line.color"></span>{{ line.name }}
+              </li>
+            }
+          </ul>
+        }
       }
     </figure>
   `,
@@ -333,6 +379,16 @@ export class VolumeChart {
    */
   readonly compact = input(false);
 
+  /**
+   * A ceiling imposed from outside, for a chart that has to be read against
+   * its neighbours.
+   *
+   * A grid of small multiples where each panel scaled itself would put a
+   * series peaking at four milliseconds and one peaking at four seconds at the
+   * same height, which is the one comparison the grid exists to make.
+   */
+  readonly scaleTo = input<number | null>(null);
+
   /** A gradient lives in the document, so two charts on one page need two ids
    * or the second quietly paints with the first's colour. */
   protected readonly fillId = `fill-${Math.random().toString(36).slice(2, 9)}`;
@@ -384,7 +440,7 @@ export class VolumeChart {
    * largest single series, so its line left the top of the plot — and the SVG
    * paints outside its box, so it ran up the page and across the tiles.
    */
-  private readonly lines = computed<Omit<Series, 'path' | 'labelY' | 'area'>[]>(() => {
+  private readonly lines = computed<Omit<Series, 'path' | 'labelY' | 'area' | 'dots'>[]>(() => {
     const buckets = this.buckets();
 
     if (buckets.length === 0) {
@@ -457,7 +513,9 @@ export class VolumeChart {
   });
 
   protected readonly series = computed<Series[]>(() => {
-    const max = this.max();
+    // The same top the grid is drawn against, or the lines would be plotted
+    // on one scale and read against another.
+    const max = this.scaleMax();
 
     const lines = this.lines();
     // An area under a single line reads as a quantity rather than as a wire,
@@ -494,6 +552,10 @@ export class VolumeChart {
       return {
         ...line,
         path: runs.map((points) => curve(points)).join(' '),
+        // A bucket on its own between two silences has no line to be part of,
+        // and `M x,y` with nothing after it paints nothing: one reading in a
+        // window simply disappeared. It gets a dot.
+        dots: runs.filter((points) => points.length === 1).map(([point]) => point),
         area: filled
           ? runs
               .filter((points) => points.length > 1)
@@ -510,18 +572,32 @@ export class VolumeChart {
     return dodge(placed);
   });
 
-  private readonly dataMax = computed(() =>
-    Math.max(
-      1,
-      ...this.lines().flatMap((line) =>
-        line.values.filter((value): value is number => value !== null),
-      ),
-    ),
-  );
+  /**
+   * The largest reading drawn, or one when there are none.
+   *
+   * The floor used to be unconditional, which is right for counts and absurd
+   * for anything smaller than one: a CPU rate of four milliseconds per second
+   * was plotted against an axis running to a full second, so the line lay on
+   * the baseline and the chart was ninety-nine per cent empty. A floor is only
+   * needed to keep the division below from meeting a zero.
+   */
+  private readonly dataMax = computed(() => {
+    const values = this.lines().flatMap((line) =>
+      line.values.filter((value): value is number => value !== null),
+    );
 
-  private readonly max = computed(() =>
-    this.referenceFits() ? Math.max(this.dataMax(), this.reference() ?? 0) : this.dataMax(),
-  );
+    return Math.max(...values, 0) || 1;
+  });
+
+  private readonly max = computed(() => {
+    const imposed = this.scaleTo();
+
+    if (imposed !== null && imposed > 0) {
+      return imposed;
+    }
+
+    return this.referenceFits() ? Math.max(this.dataMax(), this.reference() ?? 0) : this.dataMax();
+  });
 
   /**
    * Whether the limit can share an axis with the data.
@@ -549,7 +625,7 @@ export class VolumeChart {
       return null;
     }
 
-    return { y: this.y(reference, this.max()), label: this.format()(reference) };
+    return { y: this.y(reference, this.scaleMax()), label: this.format()(reference) };
   });
 
   /** The same fact the line would have carried, for when it is off the scale:
@@ -567,19 +643,51 @@ export class VolumeChart {
     return `${this.format()(peak)} of ${this.format()(reference)} (${share < 1 ? '<1' : share}%)`;
   });
 
-  protected readonly gridLines = computed(() => {
+  /**
+   * The top of the axis: the largest reading, rounded up to a round number.
+   *
+   * Two things come of it. The labels land on values a person would have
+   * chosen — 0, 25, 50, 75, 100 rather than 0, 23, 46, 69, 92 — and there is
+   * headroom above the data, so a series sitting at a constant 2 is drawn
+   * across the plot rather than glued along its top edge.
+   */
+  /** The distance between two grid lines: 1, 2 or 5 times a power of ten. */
+  private readonly scaleStep = computed(() => niceStep(this.max() / 4));
+
+  protected readonly scaleMax = computed(() => {
     const max = this.max();
+    const step = this.scaleStep();
+    const top = Math.max(step, Math.ceil(max / step) * step);
 
-    return [0, 0.25, 0.5, 0.75, 1].map((fraction) => {
-      const value = Math.round(max * fraction);
+    // A reading that is already a round number lands exactly on the ceiling,
+    // which is how a flat series at 2 ends up drawn along the top edge with
+    // nothing above it. One more step gives it somewhere to sit.
+    return top === max ? top + step : top;
+  });
 
-      return { value, y: this.y(value, max), label: this.format()(value) };
-    });
+  protected readonly gridLines = computed(() => {
+    const top = this.scaleMax();
+    const step = this.scaleStep();
+    const lines: { value: number; y: number; label: string }[] = [];
+
+    // Multiples of the step, not quarters of the top: quarters of 2.5 are
+    // 0.63, 1.25 and 1.88, which is the arithmetic showing through. Multiples
+    // of 0.5 are what someone would have written on the axis.
+    for (let value = 0; value <= top + step / 2; value += step) {
+      // Formatted, never rounded. A fifth of a message a second rounds to
+      // zero, and an axis reading 0, 0, 0, 0, 0 is worse than none: it says
+      // the data is nothing when it is only small.
+      lines.push({ value, y: this.y(value, top), label: this.format()(value) });
+    }
+
+    return lines;
   });
 
   protected readonly timeTicks = computed(() => {
     const buckets = this.buckets();
-    const wanted = Math.min(6, buckets.length);
+    // Three on a panel in a grid. Six dates under a twenty-one-rem panel run
+    // into each other and none of them can be read.
+    const wanted = Math.min(this.compact() ? 3 : 6, buckets.length);
     const step = Math.max(1, Math.floor(buckets.length / wanted));
 
     return buckets
@@ -627,10 +735,11 @@ export class VolumeChart {
 
     const ratio = (event.clientX - bounds.left) / bounds.width;
     const position = Math.round(
-      ((ratio * this.measured() - VIEW.left) / (this.plotRight() - VIEW.left)) * (buckets.length - 1),
+      ((ratio * this.measured() - VIEW.left) / (this.plotRight() - VIEW.left)) *
+        (buckets.length - 1),
     );
     const index = Math.min(Math.max(position, 0), buckets.length - 1);
-    const max = this.max();
+    const max = this.scaleMax();
 
     this.hover.set({
       x: this.x(index),
@@ -677,6 +786,24 @@ function dodge(series: Series[]): Series[] {
   }
 
   return series;
+}
+
+/**
+ * A step a person would have chosen: 1, 2 or 5 times a power of ten.
+ *
+ * Works below one as well as above it, which is the point — a rate of four
+ * milliseconds a second needs a step of 0.001, and rounding it to an integer
+ * gives an axis of nothing but zeroes.
+ */
+function niceStep(rough: number): number {
+  if (!Number.isFinite(rough) || rough <= 0) {
+    return 1;
+  }
+
+  const magnitude = 10 ** Math.floor(Math.log10(rough));
+  const normalised = rough / magnitude;
+
+  return (normalised <= 1 ? 1 : normalised <= 2 ? 2 : normalised <= 5 ? 5 : 10) * magnitude;
 }
 
 function compact(value: number): string {
@@ -764,8 +891,8 @@ function curve(points: readonly (readonly [number, number])[]): string {
     const distance = Math.hypot(before, after);
 
     if (distance > 3) {
-      tangents[index] = ((3 / distance) * before) * slope;
-      tangents[index + 1] = ((3 / distance) * after) * slope;
+      tangents[index] = (3 / distance) * before * slope;
+      tangents[index + 1] = (3 / distance) * after * slope;
     }
   });
 

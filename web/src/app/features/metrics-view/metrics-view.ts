@@ -7,7 +7,15 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { combineLatest, distinctUntilChanged, map, startWith, skip } from 'rxjs';
+import {
+  BehaviorSubject,
+  combineLatest,
+  distinctUntilChanged,
+  map,
+  shareReplay,
+  startWith,
+  skip,
+} from 'rxjs';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 
 import { AppScope } from '../../core/app-scope';
@@ -149,14 +157,15 @@ function share(value: number, of: number): string {
     MatSelectModule,
     MatSlideToggleModule,
     MatRippleModule,
-    MatTooltipModule, PageHeader],
+    MatTooltipModule,
+    PageHeader,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <wt-page-header
       heading="Metrics"
       subtitle="Every instrument reporting, with the shape of each. Pick one for the full breakdown."
     >
-
       @if (selected$ | async; as metric) {
         @if (metric.kind === 'sum') {
           <mat-slide-toggle
@@ -232,14 +241,87 @@ function share(value: number, of: number): string {
           </div>
         }
 
-        <wt-volume-chart
-          [points]="(points$ | async) ?? []"
-          [empty]="absence(metric)"
-          [reference]="(reference$ | async) ?? null"
-          [format]="formatter(metric)"
-          [title]="(selectedTitle$ | async) ?? metric.name"
-          [unit]="unitLabel(metric)"
-        />
+        <!-- One panel per value rather than every value on one chart.
+             Forty-eight series fighting for six colours and an "Other" is not
+             a breakdown; it is a thicket. Split by one key and each value gets
+             its own plot, read against a shared ceiling so a panel peaking at
+             four milliseconds and one peaking at four seconds are not drawn
+             the same height.
+
+             The full chart stays at the top and the thumbnails scroll under
+             it: picking the twelfth value should not push what you picked it
+             to see off the screen. -->
+        @if (breakdown$ | async; as breakdown) {
+          @if (focused$ | async; as focused) {
+            <wt-volume-chart
+              [points]="focused.points"
+              [empty]="absence(metric)"
+              [reference]="(reference$ | async) ?? null"
+              [format]="formatter(metric)"
+              [title]="breakdown.key + '=' + focused.value"
+              [unit]="unitLabel(metric)"
+            />
+          } @else {
+            <wt-volume-chart
+              [points]="(points$ | async) ?? []"
+              [empty]="absence(metric)"
+              [reference]="(reference$ | async) ?? null"
+              [format]="formatter(metric)"
+              [title]="(selectedTitle$ | async) ?? metric.name"
+              [unit]="unitLabel(metric)"
+            />
+          }
+
+          <p class="dim fx-flex fx-items-center fx-gap-3 fx-mt-2">
+            <span
+              >{{ breakdown.panels.length }} values of <code>{{ breakdown.key }}</code></span
+            >
+            @if (focused$ | async; as focused) {
+              <button type="button" class="link" (click)="focus(null)">show all</button>
+            }
+            <mat-slide-toggle
+              [checked]="(shared$ | async) ?? true"
+              (change)="shareScale($event.checked)"
+              matTooltip="Draw every panel against the same ceiling, so their heights can be compared"
+            >
+              same scale
+            </mat-slide-toggle>
+          </p>
+
+          <div class="multiples fx-mt-2">
+            @for (panel of breakdown.panels; track panel.value) {
+              <figure
+                class="panel"
+                [class.active]="panel.value === (focus$ | async)"
+                (click)="focus(panel.value)"
+              >
+                <figcaption class="fx-flex fx-items-baseline fx-gap-2">
+                  <span class="mono">{{ panel.value }}</span>
+                  <span class="peak dim fx-ml-a">{{ format(metric, panel.peak) }}</span>
+                </figcaption>
+
+                <wt-volume-chart
+                  [points]="panel.points"
+                  [empty]="absence(metric)"
+                  [format]="formatter(metric)"
+                  [scaleTo]="(shared$ | async) ? breakdown.ceiling : null"
+                  [compact]="true"
+                  title=""
+                  unit=""
+                />
+              </figure>
+            }
+          </div>
+        } @else {
+          <wt-volume-chart
+            [points]="(points$ | async) ?? []"
+            [empty]="absence(metric)"
+            [reference]="(reference$ | async) ?? null"
+            [format]="formatter(metric)"
+            [title]="(selectedTitle$ | async) ?? metric.name"
+            [unit]="unitLabel(metric)"
+          />
+        }
 
         <!-- What the window actually held. A percentile is an estimate read
              out of buckets; these are the numbers the instrument reports
@@ -248,10 +330,18 @@ function share(value: number, of: number): string {
         @if (window$ | async; as window) {
           @if (window.observations > 0) {
             <p class="window fx-flex fx-flex-wrap fx-gap-3 fx-mt-2">
-              <span><strong>{{ window.observations | number }}</strong> observations</span>
-              <span class="dim">mean <strong>{{ format(metric, window.mean) }}</strong></span>
-              <span class="dim">fastest <strong>{{ format(metric, window.smallest) }}</strong></span>
-              <span class="dim">worst <strong>{{ format(metric, window.largest) }}</strong></span>
+              <span
+                ><strong>{{ window.observations | number }}</strong> observations</span
+              >
+              <span class="dim"
+                >mean <strong>{{ format(metric, window.mean) }}</strong></span
+              >
+              <span class="dim"
+                >fastest <strong>{{ format(metric, window.smallest) }}</strong></span
+              >
+              <span class="dim"
+                >worst <strong>{{ format(metric, window.largest) }}</strong></span
+              >
 
               <!-- The question a percentile raises and cannot answer: which
                    ones. There are no exemplars in this data, so the link is
@@ -295,54 +385,54 @@ function share(value: number, of: number): string {
 
       <section class="cards fx-mb-5">
         @for (card of group.cards; track card.key) {
-        <button
-          type="button"
-          class="card"
-          matRipple
-          [class.current]="card.lead.name === (selectedName$ | async)"
-          [attr.aria-pressed]="card.lead.name === (selectedName$ | async)"
-          (click)="pick(card)"
-        >
-          <span class="top fx-flex fx-items-baseline fx-gap-2">
-            <!-- The name is ellipsised to keep every card the same width, so
+          <button
+            type="button"
+            class="card"
+            matRipple
+            [class.current]="card.lead.name === (selectedName$ | async)"
+            [attr.aria-pressed]="card.lead.name === (selectedName$ | async)"
+            (click)="pick(card)"
+          >
+            <span class="top fx-flex fx-items-baseline fx-gap-2">
+              <!-- The name is ellipsised to keep every card the same width, so
                  the full one has to stay reachable. -->
-            <span class="name mono" [title]="card.title">{{ card.title }}</span>
-            <span class="badge fx-ml-a">{{ reading(card.lead) }}</span>
-          </span>
+              <span class="name mono" [title]="card.title">{{ card.title }}</span>
+              <span class="badge fx-ml-a">{{ reading(card.lead) }}</span>
+            </span>
 
-          <span class="value">
-            {{ display(card.lead) }}<small class="suffix">{{ suffix(card.lead) }}</small>
-            <!-- A ceiling belongs beside the reading it bounds, not on a card
+            <span class="value">
+              {{ display(card.lead) }}<small class="suffix">{{ suffix(card.lead) }}</small>
+              <!-- A ceiling belongs beside the reading it bounds, not on a card
                  of its own where 256 MB looks like a measurement. -->
-            @if (card.ceiling) {
-              <small class="ceiling">{{ card.ceiling }}</small>
-            }
-          </span>
-
-          <wt-sparkline
-            [points]="card.lead.points"
-            [empty]="absence(card.lead)"
-            [label]="card.title + ', ' + reading(card.lead) + ' over the selected window'"
-          />
-
-          @if (card.facets.length) {
-            <span class="facets">
-              @for (facet of card.facets; track facet.label) {
-                <span class="facet">
-                  <span class="dim" [title]="facet.detail">{{ facet.label }}</span>
-                  <span class="num">{{ facet.value }}</span>
-                </span>
+              @if (card.ceiling) {
+                <small class="ceiling">{{ card.ceiling }}</small>
               }
             </span>
-          }
 
-          <span class="foot dim">
-            {{ card.lead.series }} {{ card.lead.series === 1 ? 'series' : 'series' }}
-            @if (card.lead.unit) {
-              · {{ card.lead.unit }}
+            <wt-sparkline
+              [points]="card.lead.points"
+              [empty]="absence(card.lead)"
+              [label]="card.title + ', ' + reading(card.lead) + ' over the selected window'"
+            />
+
+            @if (card.facets.length) {
+              <span class="facets">
+                @for (facet of card.facets; track facet.label) {
+                  <span class="facet">
+                    <span class="dim" [title]="facet.detail">{{ facet.label }}</span>
+                    <span class="num">{{ facet.value }}</span>
+                  </span>
+                }
+              </span>
             }
-          </span>
-        </button>
+
+            <span class="foot dim">
+              {{ card.lead.series }} {{ card.lead.series === 1 ? 'series' : 'series' }}
+              @if (card.lead.unit) {
+                · {{ card.lead.unit }}
+              }
+            </span>
+          </button>
         }
       </section>
     } @empty {
@@ -376,6 +466,61 @@ function share(value: number, of: number): string {
 
     .breakdown .split {
       width: 13rem;
+    }
+
+    /* Wide enough that a panel still shows a shape, and scrolling on its own
+       rather than with the page: the chart above is what a thumbnail is
+       clicked to change, so it has to stay in view while you pick. */
+    .multiples {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr));
+      gap: var(--fx-s);
+      max-height: 23rem;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-right: var(--fx-2xs);
+    }
+
+    .panel {
+      margin: 0;
+      padding: var(--fx-2xs) var(--fx-xs) 0;
+      border: 1px solid var(--line);
+      border-radius: var(--mat-sys-corner-small);
+      background: var(--surface);
+      cursor: pointer;
+      transition:
+        border-color 120ms ease,
+        background 120ms ease;
+    }
+
+    .panel:hover {
+      border-color: var(--accent);
+      background: var(--surface-raised);
+    }
+
+    .panel.active {
+      border-color: var(--accent);
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+
+    /* A button because it acts on this page rather than going anywhere, and
+       it should still read as the link it looks like. */
+    .link {
+      border: 0;
+      padding: 0;
+      background: none;
+      font: inherit;
+      color: var(--accent);
+      cursor: pointer;
+    }
+
+    .panel figcaption {
+      font-size: var(--fx-typography--1);
+      color: var(--text);
+    }
+
+    .panel .peak {
+      font-variant-numeric: tabular-nums;
     }
 
     /* The chart is what this page is for, so it gets the width. It was capped
@@ -412,7 +557,9 @@ function share(value: number, of: number): string {
 
     .card {
       display: grid;
-      transition: border-color 0.12s ease, background 0.12s ease;
+      transition:
+        border-color 0.12s ease,
+        background 0.12s ease;
       /* Both halves of the same fix: a grid item and a grid track size to auto
          by default, which means as wide as the longest unbreakable thing
          inside. A metric name is one long unbreakable thing, so without these
@@ -578,6 +725,67 @@ export class MetricsView implements OnInit {
   protected readonly split$ = this.store.split$;
   protected readonly where$ = this.store.where$;
 
+  /** Whether the panels share one ceiling. On by default: comparing them is
+   * the reason they are side by side. */
+  private readonly shared$$ = new BehaviorSubject(true);
+
+  protected readonly shared$ = this.shared$$.asObservable();
+
+  /**
+   * The breakdown, when there is one to draw.
+   *
+   * Only for a single key: a split by two keys produces one panel per
+   * combination, which is the thicket again with more frames around it. And
+   * only above one value, because a grid of one panel is a chart with a worse
+   * caption.
+   */
+  protected readonly breakdown$ = combineLatest([this.split$, this.points$]).pipe(
+    map(([split, points]) => {
+      if (split.length !== 1 || points.length === 0) {
+        return null;
+      }
+
+      const key = split[0];
+      const values = [...new Set(points.map((point) => point.series))].sort();
+
+      if (values.length < 2) {
+        return null;
+      }
+
+      const panels = values.map((value) => {
+        const own = points.filter((point) => point.series === value);
+        const readings = own
+          .map((point) => point.value)
+          .filter((reading): reading is number => reading !== null);
+
+        return {
+          value: value.startsWith(`${key}=`) ? value.slice(key.length + 1) : value,
+          points: own,
+          peak: Math.max(...readings, 0),
+        };
+      });
+
+      return {
+        key,
+        panels: [...panels].sort((a, b) => b.peak - a.peak),
+        ceiling: Math.max(...panels.map((panel) => panel.peak), 0),
+      };
+    }),
+    shareReplay({ bufferSize: 1, refCount: true }),
+  );
+
+  /** Which thumbnail the chart above is showing, if any. */
+  private readonly focus$$ = new BehaviorSubject<string | null>(null);
+
+  protected readonly focus$ = this.focus$$.asObservable();
+
+  /** Resolved against the panels that exist now, so a focus left behind by a
+   * changed split or filter falls back to all of them instead of to an
+   * honestly empty chart nobody asked for. */
+  protected readonly focused$ = combineLatest([this.breakdown$, this.focus$]).pipe(
+    map(([breakdown, value]) => breakdown?.panels.find((panel) => panel.value === value) ?? null),
+  );
+
   protected readonly percentiles = [
     { value: 0.5, label: 'p50', hint: 'The median: what half of them are faster than' },
     { value: 0.9, label: 'p90', hint: 'What nine in ten are faster than' },
@@ -602,11 +810,9 @@ export class MetricsView implements OnInit {
       )
       .subscribe((range) => this.store.dispatch('selectRange', range));
 
-    this.scope.app$
-      .pipe(skip(1), takeUntilDestroyed())
-      .subscribe(() => {
-        this.store.dispatch('loadCatalogue');
-      });
+    this.scope.app$.pipe(skip(1), takeUntilDestroyed()).subscribe(() => {
+      this.store.dispatch('loadCatalogue');
+    });
   }
 
   ngOnInit(): void {
@@ -731,6 +937,17 @@ export class MetricsView implements OnInit {
     this.store.dispatch('selectFilter', { key, values });
   }
 
+  /** Clicking a panel draws it full size above; clicking it again goes back to
+   * all of them. It stays a focus rather than becoming a filter so the grid is
+   * still there to pick the next one from. */
+  protected focus(value: string | null): void {
+    this.focus$$.next(value === this.focus$$.value ? null : value);
+  }
+
+  protected shareScale(shared: boolean): void {
+    this.shared$$.next(shared);
+  }
+
   protected selectPercentile(percentile: number): void {
     this.store.dispatch('selectPercentile', percentile);
   }
@@ -772,9 +989,7 @@ export class MetricsView implements OnInit {
    * too new, and the next bucket fixes it.
    */
   protected absence(metric: MetricOverview): string {
-    return metric.samples > 0
-      ? 'not enough history yet for a rate'
-      : 'no data in this window';
+    return metric.samples > 0 ? 'not enough history yet for a rate' : 'no data in this window';
   }
 
   protected display(metric: MetricOverview): string {
