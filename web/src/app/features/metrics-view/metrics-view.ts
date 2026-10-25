@@ -248,69 +248,74 @@ function share(value: number, of: number): string {
              four milliseconds and one peaking at four seconds are not drawn
              the same height.
 
-             The full chart stays at the top and the thumbnails scroll under
-             it: picking the twelfth value should not push what you picked it
-             to see off the screen. -->
+             Two panes, not one long page: the chart the thumbnails feed
+             holds the top of the screen and only the strip under it scrolls,
+             so picking the twelfth value does not push what you picked it to
+             see out of sight. -->
         @if (breakdown$ | async; as breakdown) {
-          @if (focused$ | async; as focused) {
-            <wt-volume-chart
-              [points]="focused.points"
-              [empty]="absence(metric)"
-              [reference]="(reference$ | async) ?? null"
-              [format]="formatter(metric)"
-              [title]="breakdown.key + '=' + focused.value"
-              [unit]="unitLabel(metric)"
-            />
-          } @else {
-            <wt-volume-chart
-              [points]="(points$ | async) ?? []"
-              [empty]="absence(metric)"
-              [reference]="(reference$ | async) ?? null"
-              [format]="formatter(metric)"
-              [title]="(selectedTitle$ | async) ?? metric.name"
-              [unit]="unitLabel(metric)"
-            />
-          }
-
-          <p class="dim fx-flex fx-items-center fx-gap-3 fx-mt-2">
-            <span
-              >{{ breakdown.panels.length }} values of <code>{{ breakdown.key }}</code></span
-            >
-            @if (focused$ | async; as focused) {
-              <button type="button" class="link" (click)="focus(null)">show all</button>
-            }
-            <mat-slide-toggle
-              [checked]="(shared$ | async) ?? true"
-              (change)="shareScale($event.checked)"
-              matTooltip="Draw every panel against the same ceiling, so their heights can be compared"
-            >
-              same scale
-            </mat-slide-toggle>
-          </p>
-
-          <div class="multiples fx-mt-2">
-            @for (panel of breakdown.panels; track panel.value) {
-              <figure
-                class="panel"
-                [class.active]="panel.value === (focus$ | async)"
-                (click)="focus(panel.value)"
-              >
-                <figcaption class="fx-flex fx-items-baseline fx-gap-2">
-                  <span class="mono">{{ panel.value }}</span>
-                  <span class="peak dim fx-ml-a">{{ format(metric, panel.peak) }}</span>
-                </figcaption>
-
+          <div class="panes">
+            <div class="feature">
+              @if (focused$ | async; as focused) {
                 <wt-volume-chart
-                  [points]="panel.points"
+                  [points]="focused.points"
                   [empty]="absence(metric)"
+                  [reference]="(reference$ | async) ?? null"
                   [format]="formatter(metric)"
-                  [scaleTo]="(shared$ | async) ? breakdown.ceiling : null"
-                  [compact]="true"
-                  title=""
-                  unit=""
+                  [title]="breakdown.key + '=' + focused.value"
+                  [unit]="unitLabel(metric)"
                 />
-              </figure>
-            }
+              } @else {
+                <wt-volume-chart
+                  [points]="(points$ | async) ?? []"
+                  [empty]="absence(metric)"
+                  [reference]="(reference$ | async) ?? null"
+                  [format]="formatter(metric)"
+                  [title]="(selectedTitle$ | async) ?? metric.name"
+                  [unit]="unitLabel(metric)"
+                />
+              }
+
+              <p class="dim fx-flex fx-items-center fx-gap-3 fx-mt-2">
+                <span
+                  >{{ breakdown.panels.length }} values of <code>{{ breakdown.key }}</code></span
+                >
+                @if (focused$ | async; as focused) {
+                  <button type="button" class="link" (click)="focus(null)">show all</button>
+                }
+                <mat-slide-toggle
+                  [checked]="(shared$ | async) ?? true"
+                  (change)="shareScale($event.checked)"
+                  matTooltip="Draw every panel against the same ceiling, so their heights can be compared"
+                >
+                  same scale
+                </mat-slide-toggle>
+              </p>
+            </div>
+
+            <div class="multiples">
+              @for (panel of breakdown.panels; track panel.value) {
+                <figure
+                  class="panel"
+                  [class.active]="panel.value === (focus$ | async)"
+                  (click)="focus(panel.value)"
+                >
+                  <figcaption class="fx-flex fx-items-baseline fx-gap-2">
+                    <span class="mono">{{ panel.value }}</span>
+                    <span class="peak dim fx-ml-a">{{ format(metric, panel.peak) }}</span>
+                  </figcaption>
+
+                  <wt-volume-chart
+                    [points]="panel.points"
+                    [empty]="absence(metric)"
+                    [format]="formatter(metric)"
+                    [scaleTo]="(shared$ | async) ? breakdown.ceiling : null"
+                    [compact]="true"
+                    title=""
+                    unit=""
+                  />
+                </figure>
+              }
+            </div>
           </div>
         } @else {
           <wt-volume-chart
@@ -468,17 +473,34 @@ function share(value: number, of: number): string {
       width: 13rem;
     }
 
-    /* Wide enough that a panel still shows a shape, and scrolling on its own
-       rather than with the page: the chart above is what a thumbnail is
-       clicked to change, so it has to stay in view while you pick. */
+    /* Two panes sharing the screen: the chart keeps its size at the top and
+       the strip below it takes what is left and scrolls inside itself. One
+       long page instead would scroll the chart away exactly when a thumbnail
+       is clicked to change it. */
+    .panes {
+      display: flex;
+      flex-direction: column;
+      height: calc(100dvh - 17rem);
+      min-height: 32rem;
+    }
+
+    .feature {
+      flex: none;
+    }
+
+    /* Wide enough that a panel still shows a shape. min-height: 0 because a
+       flex child refuses to shrink below its content otherwise, which would
+       hand the scrollbar back to the page. */
     .multiples {
+      flex: 1;
+      min-height: 0;
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr));
+      grid-auto-rows: min-content;
       gap: var(--fx-s);
-      max-height: 23rem;
       overflow-y: auto;
       overscroll-behavior: contain;
-      padding-right: var(--fx-2xs);
+      padding: var(--fx-2xs) var(--fx-2xs) 0 0;
     }
 
     .panel {
