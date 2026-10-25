@@ -378,8 +378,11 @@ function share(value: number, of: number): string {
       width: 13rem;
     }
 
+    /* The chart is what this page is for, so it gets the width. It was capped
+       at 60rem on a page half as wide again, which squeezed a day of buckets
+       into two thirds of the room and left the rest blank. */
     .detail {
-      max-width: 60rem;
+      max-width: 90rem;
       transition: opacity 0.15s ease;
     }
 
@@ -824,7 +827,7 @@ export class MetricsView implements OnInit {
   protected slowTraces(
     metric: MetricOverview,
     window: { services: string[] },
-    points: readonly { value: number }[],
+    points: readonly { value: number | null }[],
   ): { params: Record<string, string>; label: string } | null {
     const ms = metric.unit === 'ms' ? 1 : metric.unit === 's' ? 1000 : 0;
 
@@ -836,7 +839,10 @@ export class MetricsView implements OnInit {
     // bucket is whatever happened in the last few minutes, and on a quiet one
     // it sets a threshold that matches nearly every span. The median of the
     // line is what the line typically says.
-    const values = points.map((point) => point.value).sort((a, b) => a - b);
+    const values = points
+      .map((point) => point.value)
+      .filter((value): value is number => value !== null)
+      .sort((a, b) => a - b);
     const typical = values[Math.floor(values.length / 2)] ?? 0;
 
     if (typical <= 0) {

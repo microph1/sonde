@@ -103,5 +103,7 @@ export interface VolumePoint {
 export interface SeriesPoint {
   readonly bucket: string;
   readonly series: string;
-  readonly value: number;
+  /** Null where the window has a bucket and the instrument reported nothing:
+   * a gauge that was not sampled is not a gauge reading nought. */
+  readonly value: number | null;
 }

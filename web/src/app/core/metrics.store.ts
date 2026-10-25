@@ -454,7 +454,7 @@ export class MetricsStore
       }));
     });
 
-    return from(Promise.all(lines).then((all) => all.flat()));
+    return from(Promise.all(lines).then((all) => onTheGrid(all.flat(), query.range)));
   }
 
   @Reduce()
@@ -530,4 +530,55 @@ export class MetricsStore
 
     return (await response.json()) as T;
   }
+}
+
+/**
+ * Every series on the same grid of buckets, with the quiet ones left empty.
+ *
+ * The chart plots by position, so a window with nothing in it between one
+ * o'clock and nine compresses eight hours into the gap between two points: the
+ * axis then reads 13:00, 21:30 at the same spacing as 13:00, 14:00, and the
+ * shape in between is an invention. Filling the grid makes position mean time
+ * again.
+ *
+ * Empty rather than zero, because for most instruments they are different
+ * claims. A gauge that was not sampled is not a gauge reading nought, and a
+ * line drawn down to the axis and back says the machine idled when the truth
+ * is nobody asked it.
+ */
+function onTheGrid(points: SeriesPoint[], range: Range): SeriesPoint[] {
+  if (points.length === 0) {
+    return points;
+  }
+
+  const { from, to } = resolve(range);
+  const step = bucketOf(range).seconds * 1000;
+  const first = Math.floor(Date.parse(from) / step) * step;
+  const last = Math.floor(Date.parse(to) / step) * step;
+
+  // Beyond this the fill costs more than the honesty buys: a seven-day window
+  // at ten-second buckets is sixty thousand points per series.
+  if ((last - first) / step > 2_000) {
+    return points;
+  }
+
+  const held = new Map(points.map((point) => [`${point.bucket}|${point.series}`, point]));
+  const names = [...new Set(points.map((point) => point.series))];
+  const dense: SeriesPoint[] = [];
+
+  for (let at = first; at <= last; at += step) {
+    const bucket = clickHouseTime(at);
+
+    for (const series of names) {
+      dense.push(held.get(`${bucket}|${series}`) ?? { bucket, series, value: null });
+    }
+  }
+
+  return dense;
+}
+
+/** ClickHouse renders its buckets as `YYYY-MM-DD hh:mm:ss` in UTC; a generated
+ * one has to match exactly to line up with the ones it returned. */
+function clickHouseTime(epochMs: number): string {
+  return new Date(epochMs).toISOString().replace('T', ' ').slice(0, 19);
 }

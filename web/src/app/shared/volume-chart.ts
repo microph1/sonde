@@ -21,10 +21,12 @@ const OTHER = 'Other';
 interface Series {
   readonly name: string;
   readonly color: string;
-  readonly values: number[];
+  readonly values: (number | null)[];
   readonly total: number;
   readonly path: string;
   readonly labelY: number;
+  /** The same shape closed to the baseline, when the chart draws a fill. */
+  readonly area: string;
 }
 
 const VIEW = { width: 960, height: 260, left: 52, right: 118, top: 12, bottom: 28 };
@@ -88,6 +90,9 @@ const LABEL_CHARS = 17;
           }
 
           @for (line of series(); track line.name) {
+            @if (line.area) {
+              <path class="area" [attr.d]="line.area" [attr.fill]="line.color" />
+            }
             <path class="series" [attr.d]="line.path" [attr.stroke]="line.color" />
           }
 
@@ -170,6 +175,13 @@ const LABEL_CHARS = 17;
     .axis {
       fill: var(--text-dim);
       font-size: 11px;
+    }
+
+    /* Enough to read the shape against the grid, little enough that two
+       overlapping lines are still two lines. */
+    .area {
+      opacity: 0.14;
+      stroke: none;
     }
 
     .series {
@@ -299,7 +311,7 @@ export class VolumeChart {
    * largest single series, so its line left the top of the plot — and the SVG
    * paints outside its box, so it ran up the page and across the tiles.
    */
-  private readonly lines = computed<Omit<Series, 'path' | 'labelY'>[]>(() => {
+  private readonly lines = computed<Omit<Series, 'path' | 'labelY' | 'area'>[]>(() => {
     const buckets = this.buckets();
 
     if (buckets.length === 0) {
@@ -308,13 +320,22 @@ export class VolumeChart {
 
     const index = new Map(buckets.map((bucket, position) => [bucket, position]));
     const totals = new Map<string, number>();
-    const rows = new Map<string, number[]>();
+    // Null until something lands in it, so a bucket the instrument never
+    // reported stays a hole rather than becoming a zero: the line breaks there
+    // instead of diving to the axis and back.
+    const rows = new Map<string, (number | null)[]>();
 
     for (const point of this.points()) {
-      const row = rows.get(point.series) ?? new Array<number>(buckets.length).fill(0);
-      row[index.get(point.bucket) ?? 0] += point.value;
+      const row = rows.get(point.series) ?? new Array<number | null>(buckets.length).fill(null);
+      const at = index.get(point.bucket) ?? 0;
+
+      if (point.value !== null) {
+        row[at] = (row[at] ?? 0) + point.value;
+        totals.set(point.series, (totals.get(point.series) ?? 0) + point.value);
+      }
+
       rows.set(point.series, row);
-      totals.set(point.series, (totals.get(point.series) ?? 0) + point.value);
+      totals.set(point.series, totals.get(point.series) ?? 0);
     }
 
     // Ranked by total, but no longer filtered by it: a series flat at zero is a
@@ -339,10 +360,16 @@ export class VolumeChart {
     }));
 
     if (folded.length > 0) {
-      const values = new Array<number>(buckets.length).fill(0);
+      // Null until one of the folded series reports: an "Other" of nothing is
+      // a hole, not a floor.
+      const values = new Array<number | null>(buckets.length).fill(null);
 
       for (const [name] of folded) {
-        (rows.get(name) ?? []).forEach((value, position) => (values[position] += value));
+        (rows.get(name) ?? []).forEach((value, position) => {
+          if (value !== null) {
+            values[position] = (values[position] ?? 0) + value;
+          }
+        });
       }
 
       series.push({
@@ -359,19 +386,64 @@ export class VolumeChart {
   protected readonly series = computed<Series[]>(() => {
     const max = this.max();
 
-    const placed = this.lines().map((line) => ({
-      ...line,
-      path: line.values
-        .map((value, position) => `${position === 0 ? 'M' : 'L'}${this.x(position)},${this.y(value, max)}`)
-        .join(' '),
-      labelY: this.y(line.values[line.values.length - 1] ?? 0, max),
-    }));
+    const lines = this.lines();
+    // An area under a single line reads as a quantity rather than as a wire,
+    // and one line is the only case where a fill cannot be mistaken for the
+    // overlap of two.
+    const filled = lines.length === 1;
+
+    const floor = this.plotBottom();
+
+    const placed = lines.map((line) => {
+      // One run per stretch of consecutive readings, so a window the
+      // instrument was silent through is a gap in the line rather than a
+      // straight stride across it.
+      const runs: (readonly [number, number])[][] = [];
+      let run: (readonly [number, number])[] = [];
+
+      line.values.forEach((value, position) => {
+        if (value === null) {
+          if (run.length > 0) {
+            runs.push(run);
+            run = [];
+          }
+
+          return;
+        }
+
+        run.push([this.x(position), this.y(value, max)] as const);
+      });
+
+      if (run.length > 0) {
+        runs.push(run);
+      }
+
+      return {
+        ...line,
+        path: runs.map((points) => curve(points)).join(' '),
+        area: filled
+          ? runs
+              .filter((points) => points.length > 1)
+              .map(
+                (points) =>
+                  `${curve(points)} L${points[points.length - 1][0]},${floor} L${points[0][0]},${floor} Z`,
+              )
+              .join(' ')
+          : '',
+        labelY: this.y(lastReading(line.values), max),
+      };
+    });
 
     return dodge(placed);
   });
 
   private readonly dataMax = computed(() =>
-    Math.max(1, ...this.lines().flatMap((line) => line.values)),
+    Math.max(
+      1,
+      ...this.lines().flatMap((line) =>
+        line.values.filter((value): value is number => value !== null),
+      ),
+    ),
   );
 
   private readonly max = computed(() =>
@@ -565,4 +637,88 @@ function shortTime(bucket: string, withDate = false): string {
   return withDate
     ? `${at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${hhmm}`
     : hhmm;
+}
+
+/**
+ * A path through the points, eased rather than folded.
+ *
+ * Monotone cubic, not a plain spline: an ordinary smoothing curve overshoots
+ * around a spike and draws a dip below zero on its way back up — a reading the
+ * data never contained, on a chart whose whole job is to be believed. This one
+ * cannot leave the interval between two neighbouring points.
+ */
+function curve(points: readonly (readonly [number, number])[]): string {
+  if (points.length === 0) {
+    return '';
+  }
+
+  if (points.length < 3) {
+    return points.map(([x, y], index) => `${index === 0 ? 'M' : 'L'}${x},${y}`).join(' ');
+  }
+
+  // Slopes of the segments, then a tangent per point that is flattened
+  // wherever the direction changes — which is what keeps the curve inside the
+  // data.
+  const slopes = points.slice(1).map(([x, y], index) => {
+    const [px, py] = points[index];
+
+    return x === px ? 0 : (y - py) / (x - px);
+  });
+
+  const tangents = points.map((_, index) => {
+    if (index === 0) return slopes[0];
+    if (index === points.length - 1) return slopes[slopes.length - 1];
+
+    const before = slopes[index - 1];
+    const after = slopes[index];
+
+    return before * after <= 0 ? 0 : (before + after) / 2;
+  });
+
+  // Fritsch–Carlson: a tangent steeper than three times its segment makes the
+  // curve leave the interval between the two points it joins. Without this the
+  // line climbed above the top gridline on a sharp spike and drew a reading
+  // higher than any the instrument reported.
+  slopes.forEach((slope, index) => {
+    if (slope === 0) {
+      tangents[index] = 0;
+      tangents[index + 1] = 0;
+      return;
+    }
+
+    const before = tangents[index] / slope;
+    const after = tangents[index + 1] / slope;
+    const distance = Math.hypot(before, after);
+
+    if (distance > 3) {
+      tangents[index] = ((3 / distance) * before) * slope;
+      tangents[index + 1] = ((3 / distance) * after) * slope;
+    }
+  });
+
+  let path = `M${points[0][0]},${points[0][1]}`;
+
+  for (let index = 1; index < points.length; index += 1) {
+    const [x0, y0] = points[index - 1];
+    const [x1, y1] = points[index];
+    const third = (x1 - x0) / 3;
+
+    path += ` C${x0 + third},${y0 + tangents[index - 1] * third} ${x1 - third},${y1 - tangents[index] * third} ${x1},${y1}`;
+  }
+
+  return path;
+}
+
+/** The last bucket the instrument actually reported, for placing a label
+ * beside a line whose final buckets are empty. */
+function lastReading(values: readonly (number | null)[]): number {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    const value = values[index];
+
+    if (value !== null) {
+      return value;
+    }
+  }
+
+  return 0;
 }
