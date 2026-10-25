@@ -1,4 +1,13 @@
-import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  ElementRef,
+  computed,
+  inject,
+  input,
+  signal,
+} from '@angular/core';
 
 import { SeriesPoint } from '../core/telemetry.model';
 
@@ -29,7 +38,16 @@ interface Series {
   readonly area: string;
 }
 
-const VIEW = { width: 960, height: 260, left: 52, right: 118, top: 12, bottom: 28 };
+/**
+ * The coordinate system, and with it the shape of the chart.
+ *
+ * The svg is sized by its width and keeps the aspect this box describes, so
+ * these two numbers are the only thing deciding how tall a chart ends up. At
+ * 960 by 260 a full-width chart was three hundred and eighty pixels of mostly
+ * empty rectangle — fine beside another chart at half the width, far too tall
+ * once one of them had the page to itself.
+ */
+const VIEW = { width: 1440, height: 300, left: 60, right: 130, top: 14, bottom: 30 };
 /** How far above the data a reference line may sit and still be drawn. Past
  * this it wins the axis and flattens the series it was meant to give context
  * to; see `referenceFits`. */
@@ -66,15 +84,15 @@ const LABEL_CHARS = 17;
           <!-- Recessive grid: present enough to read a value against, quiet
                enough that the data stays the loudest thing on screen. -->
           @for (line of gridLines(); track line.value) {
-            <line class="grid" [attr.x1]="view.left" [attr.x2]="plotRight" [attr.y1]="line.y" [attr.y2]="line.y" />
+            <line class="grid" [attr.x1]="view.left" [attr.x2]="plotRight()" [attr.y1]="line.y" [attr.y2]="line.y" />
             <text class="axis" [attr.x]="view.left - 8" [attr.y]="line.y + 4" text-anchor="end">
               {{ line.label }}
             </text>
           }
 
           @if (referenceLine(); as line) {
-            <line class="reference" [attr.x1]="view.left" [attr.x2]="plotRight" [attr.y1]="line.y" [attr.y2]="line.y" />
-            <text class="axis reference-label" [attr.x]="plotRight + 8" [attr.y]="line.y + 4">
+            <line class="reference" [attr.x1]="view.left" [attr.x2]="plotRight()" [attr.y1]="line.y" [attr.y2]="line.y" />
+            <text class="axis reference-label" [attr.x]="plotRight() + 8" [attr.y]="line.y + 4">
               {{ line.label }}
             </text>
           }
@@ -91,18 +109,28 @@ const LABEL_CHARS = 17;
 
           @for (line of series(); track line.name) {
             @if (line.area) {
-              <path class="area" [attr.d]="line.area" [attr.fill]="line.color" />
+              <!-- Faded rather than flat: a slab of colour under a level
+                   series reads as a filled bar, and the eye takes the top of
+                   it for the measurement twice. -->
+              <defs>
+                <linearGradient [attr.id]="fillId" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0" [attr.stop-color]="line.color" stop-opacity="0.3" />
+                  <stop offset="1" [attr.stop-color]="line.color" stop-opacity="0.02" />
+                </linearGradient>
+              </defs>
+              <path class="area" [attr.d]="line.area" [attr.fill]="'url(#' + fillId + ')'" />
             }
             <path class="series" [attr.d]="line.path" [attr.stroke]="line.color" />
           }
 
-          <!-- Direct labels while there are few enough to place without
-               collisions; the legend carries identity in every case. A compact strip
-               skips them entirely: there is no room beside a 130-unit plot for
-               three labels that do not overlap each other or the axis. -->
-          @if (series().length <= 4 && !compact()) {
+          <!-- Direct labels only where they can be placed without fighting:
+               two lines that converge already stack their labels on one spot,
+               and four of them pile into a block that also lands on the time
+               axis. The legend carries identity in every case, and a compact
+               strip has no room for them at all. -->
+          @if (labelled()) {
             @for (line of series(); track line.name) {
-              <text class="direct" [attr.x]="plotRight + 8" [attr.y]="line.labelY + 4" [attr.fill]="line.color">
+              <text class="direct" [attr.x]="plotRight() + 8" [attr.y]="line.labelY + 4" [attr.fill]="line.color">
                 {{ shorten(line.name) }}
               </text>
             }
@@ -143,6 +171,12 @@ const LABEL_CHARS = 17;
     </figure>
   `,
   styles: `
+    /* The host is what gets measured, and an inline element measures as its
+       content rather than as its column. */
+    :host {
+      display: block;
+    }
+
     figure {
       margin: 0;
       position: relative;
@@ -162,6 +196,8 @@ const LABEL_CHARS = 17;
 
     svg {
       width: 100%;
+      /* One user unit is one pixel, so the box the viewBox describes is the
+         box on screen. */
       height: auto;
       overflow: visible;
       touch-action: none;
@@ -180,7 +216,6 @@ const LABEL_CHARS = 17;
     /* Enough to read the shape against the grid, little enough that two
        overlapping lines are still two lines. */
     .area {
-      opacity: 0.14;
       stroke: none;
     }
 
@@ -257,6 +292,21 @@ const LABEL_CHARS = 17;
   `,
 })
 export class VolumeChart {
+  private readonly host = inject(ElementRef<HTMLElement>);
+
+  constructor() {
+    // Measured rather than assumed, and re-measured when the column changes:
+    // the same component draws a full-width chart and one of a pair, and the
+    // only honest way to keep both the right height is to know how wide each
+    // one ended up.
+    const observer = new ResizeObserver(([entry]) =>
+      this.measured.set(Math.max(360, Math.round(entry.contentRect.width))),
+    );
+
+    observer.observe(this.host.nativeElement);
+    inject(DestroyRef).onDestroy(() => observer.disconnect());
+  }
+
   /** Long-form series: one entry per bucket per series. Callers map their own
    * shape into this, so the chart knows nothing about telemetry. */
   readonly points = input.required<readonly SeriesPoint[]>();
@@ -283,10 +333,33 @@ export class VolumeChart {
    */
   readonly compact = input(false);
 
+  /** A gradient lives in the document, so two charts on one page need two ids
+   * or the second quietly paints with the first's colour. */
+  protected readonly fillId = `fill-${Math.random().toString(36).slice(2, 9)}`;
+
+  /**
+   * The box, measured rather than assumed.
+   *
+   * One user unit is one pixel, so the chart is the same height whatever
+   * column it lands in and its text and strokes are the same weight in all of
+   * them. A fixed viewBox cannot do that: the svg keeps its aspect, so the one
+   * ratio that gives a full-width chart a sensible height squashes the pair of
+   * them that share a row on the overview.
+   */
+  private readonly measured = signal(VIEW.width);
+
   protected readonly height = computed(() => (this.compact() ? 130 : VIEW.height));
   protected readonly view = VIEW;
-  protected readonly viewBox = computed(() => `0 0 ${VIEW.width} ${this.height()}`);
-  protected readonly plotRight = VIEW.width - VIEW.right;
+  protected readonly viewBox = computed(() => `0 0 ${this.measured()} ${this.height()}`);
+  /** Whether the lines are named beside their last point. Read from `lines`
+   * rather than `series`, because `series` needs the geometry this decides. */
+  protected readonly labelled = computed(() => this.lines().length <= 2 && !this.compact());
+
+  /** The reserve on the right is for those labels; without them it is dead
+   * space, and on a half-width chart it was a tenth of the plot. */
+  protected readonly plotRight = computed(
+    () => this.measured() - (this.labelled() ? VIEW.right : 24),
+  );
   protected readonly plotBottom = computed(() => this.height() - VIEW.bottom);
 
   protected readonly hover = signal<{
@@ -554,14 +627,14 @@ export class VolumeChart {
 
     const ratio = (event.clientX - bounds.left) / bounds.width;
     const position = Math.round(
-      ((ratio * VIEW.width - VIEW.left) / (this.plotRight - VIEW.left)) * (buckets.length - 1),
+      ((ratio * this.measured() - VIEW.left) / (this.plotRight() - VIEW.left)) * (buckets.length - 1),
     );
     const index = Math.min(Math.max(position, 0), buckets.length - 1);
     const max = this.max();
 
     this.hover.set({
       x: this.x(index),
-      left: (this.x(index) / VIEW.width) * 100,
+      left: (this.x(index) / this.measured()) * 100,
       // Near the right edge the tooltip would leave the figure; flip it.
       flip: index > buckets.length * 0.7,
       label: shortTime(buckets[index], true),
@@ -577,7 +650,7 @@ export class VolumeChart {
   private x(index: number): number {
     const count = Math.max(1, this.buckets().length - 1);
 
-    return VIEW.left + (index / count) * (this.plotRight - VIEW.left);
+    return VIEW.left + (index / count) * (this.plotRight() - VIEW.left);
   }
 
   private y(value: number, max: number): number {

@@ -503,6 +503,11 @@ export class MetricsStore
       overview.find(
         (metric) => metric.name === state.selected?.name && metric.kind === state.selected?.kind,
       ) ??
+      // Something with a shape to it. The list is alphabetical within its
+      // group, so the first entry was whatever sorted first -
+      // `container.cpu.throttled.periods`, flat at zero, which opened the page
+      // on a chart with nothing in it and no reason to be that size.
+      overview.find((metric) => moves(metric)) ??
       overview[0] ??
       null;
 
@@ -581,4 +586,12 @@ function onTheGrid(points: SeriesPoint[], range: Range): SeriesPoint[] {
  * one has to match exactly to line up with the ones it returned. */
 function clickHouseTime(epochMs: number): string {
   return new Date(epochMs).toISOString().replace('T', ' ').slice(0, 19);
+}
+
+/** Whether a metric did anything worth opening the page on: more than one
+ * distinct reading, and not all of them nought. */
+function moves(metric: MetricOverview): boolean {
+  const values = metric.points.map((point) => point.value);
+
+  return values.some((value) => value > 0) && new Set(values).size > 2;
 }
