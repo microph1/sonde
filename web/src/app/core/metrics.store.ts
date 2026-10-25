@@ -66,6 +66,9 @@ export interface MetricsState {
   percentile: number;
   /** The attribute keys a split or a filter can be made of. */
   facets: MetricFacet[];
+  /** What the window held, for a histogram; null for the kinds that carry a
+   * value rather than a distribution. */
+  window: MetricWindowSummary | null;
   /** Which keys make a series. Empty means the whole attribute set. */
   split: string[];
   /** Which values to keep, by key. A key absent from here is unfiltered. */
@@ -82,6 +85,7 @@ export interface MetricsActions {
   toggleRate: (rate: boolean) => Observable<boolean>;
   selectPercentile: (percentile: number) => Observable<number>;
   loadFacets: (metric: MetricSummary) => Observable<MetricFacet[]>;
+  loadWindow: (query: SeriesQuery) => Observable<MetricWindowSummary | null>;
   selectSplit: (keys: string[]) => Observable<string[]>;
   selectFilter: (filter: Filter) => Observable<Filter>;
   loadSeries: (query: SeriesQuery) => Observable<SeriesPoint[]>;
@@ -95,6 +99,14 @@ export interface Filter {
 }
 
 /** The attribute keys a metric carries, and the values each has taken. */
+/** What a window held, from the numbers a histogram reports outright. */
+export interface MetricWindowSummary {
+  readonly observations: number;
+  readonly mean: number;
+  readonly smallest: number;
+  readonly largest: number;
+}
+
 export interface MetricFacet {
   readonly key: string;
   readonly values: string[];
@@ -143,6 +155,7 @@ export class MetricsStore
   readonly rate$ = this.select((state) => state.rate);
   readonly percentile$ = this.select((state) => state.percentile);
   readonly facets$ = this.select((state) => state.facets);
+  readonly window$ = this.select((state) => state.window);
   readonly split$ = this.select((state) => state.split);
   readonly where$ = this.select((state) => state.where);
   readonly reference$ = this.select((state) => state.reference);
@@ -161,6 +174,7 @@ export class MetricsStore
       rate: false,
       percentile: 0.95,
       facets: [],
+      window: null,
       split: [],
       where: {},
       reference: null,
@@ -181,6 +195,15 @@ export class MetricsStore
       ([metric, members, labels, range, rate, percentile, split, where]) => {
         if (metric) {
           this.dispatch('loadSeries', {
+            members: members.length ? members : [metric],
+            labels,
+            range,
+            rate,
+            percentile,
+            split,
+            where,
+          });
+          this.dispatch('loadWindow', {
             members: members.length ? members : [metric],
             labels,
             range,
@@ -277,6 +300,7 @@ export class MetricsStore
       // A different metric carries different attributes, so a split or a
       // filter made of the last one's keys would quietly match nothing.
       facets: [],
+      window: null,
       split: [],
       where: {},
     };
@@ -327,6 +351,35 @@ export class MetricsStore
   @Reduce()
   onLoadFacets(state: MetricsState, facets: MetricFacet[]): MetricsState {
     return { ...state, facets };
+  }
+
+  /**
+   * What the window held, beside the percentile estimated from it.
+   *
+   * Only for a histogram: the other kinds carry a value rather than a
+   * distribution, and have nothing to count or average.
+   */
+  @Effect()
+  loadWindow(query: SeriesQuery): Observable<MetricWindowSummary | null> {
+    const metric = query.members[0];
+
+    if (!metric || metric.kind !== 'histogram') {
+      return of(null);
+    }
+
+    return from(
+      this.request<MetricWindowSummary>('POST', '/metrics/summary', {
+        name: metric.name,
+        kind: metric.kind,
+        where: query.where,
+        ...resolve(query.range),
+      }),
+    );
+  }
+
+  @Reduce()
+  onLoadWindow(state: MetricsState, window: MetricWindowSummary | null): MetricsState {
+    return { ...state, window };
   }
 
   @Effect()

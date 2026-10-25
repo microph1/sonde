@@ -61,6 +61,14 @@ export interface MetricQuery extends SearchFilters {
   readonly where?: Record<string, string[]>;
 }
 
+/** What a window held, from the numbers the instrument reports outright. */
+export interface MetricWindowSummary {
+  readonly observations: number;
+  readonly mean: number;
+  readonly smallest: number;
+  readonly largest: number;
+}
+
 /** The attribute keys a metric carries, and what values each has taken. */
 export interface MetricFacet {
   readonly key: string;
@@ -410,6 +418,79 @@ export class MetricsEndpoint {
         latest: line.points.at(-1)?.value ?? null,
       };
     });
+  }
+
+  /**
+   * What the window actually held: how many observations, their mean, and the
+   * worst and best the instrument saw.
+   *
+   * A percentile is an estimate from buckets; these are the numbers the
+   * instrument reports outright, and they are the ones that say whether a p95
+   * of 240 ms covers four calls or forty thousand. `Sum`, `Min` and `Max` had
+   * never been read by anything.
+   */
+  @Lambda({ method: 'POST', path: '/metrics/summary' })
+  public async summary(@Body() query: MetricQuery): Promise<MetricWindowSummary> {
+    if (!query?.name) {
+      throw new Error('[400] name is required');
+    }
+
+    const to = query.to ?? new Date().toISOString();
+    const from = query.from ?? new Date(Date.parse(to) - 6 * 60 * 60 * 1000).toISOString();
+    const params = {
+      name: query.name,
+      app: query.app ?? '',
+      service: query.service ?? '',
+      from: assertTime(from, 'from'),
+      to: assertTime(to, 'to'),
+      ...facetParams(query),
+    };
+
+    const [row] = await this.clickhouse.rows<MetricWindowSummary>(
+      // The same cumulative difference the chart takes, over the two scalars
+      // rather than the bucket array: a total that fell is a restart, and a
+      // stream's first export in the window counts for nothing.
+      `SELECT sum(countStep) AS observations,
+              if(observations > 0, sum(sumStep) / observations, 0) AS mean,
+              min(smallest) AS smallest,
+              max(largest) AS largest
+       FROM (
+         SELECT multiIf(position = 1, 0,
+                        total >= previousTotal, total - previousTotal,
+                        total) AS countStep,
+                multiIf(position = 1, 0,
+                        total >= previousTotal, amount - previousAmount,
+                        amount) AS sumStep,
+                smallest, largest
+         FROM (
+           SELECT total, amount, smallest, largest,
+                  lagInFrame(total) OVER stream AS previousTotal,
+                  lagInFrame(amount) OVER stream AS previousAmount,
+                  row_number() OVER stream AS position
+           FROM (
+             SELECT Timestamp,
+                    concat(ServiceName, '\\0',
+                           ResourceAttributes['service.instance.id'], '\\0',
+                           toString(Attributes)) AS stream_id,
+                    toFloat64(Count) AS total,
+                    toFloat64(Sum) AS amount,
+                    toFloat64(Min) AS smallest,
+                    toFloat64(Max) AS largest
+             FROM ${TABLES.histogram}
+             WHERE MetricName = {name:String}
+               AND ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
+               AND ({service:String} = '' OR ServiceName = {service:String})
+               AND Timestamp >= parseDateTime64BestEffort({from:String}, 9)
+               AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
+               AND ${ATTRIBUTE_FILTER}
+           )
+           WINDOW stream AS (PARTITION BY stream_id ORDER BY Timestamp)
+         )
+       )`,
+      params,
+    );
+
+    return row ?? { observations: 0, mean: 0, smallest: 0, largest: 0 };
   }
 
   /**

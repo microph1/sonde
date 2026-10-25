@@ -47,6 +47,14 @@ test.describe('metrics', () => {
     await expect(page.locator('.detail .legend')).toContainText('route=/seeded');
     await expect(page.locator('.detail')).not.toContainText('Nothing reported');
 
+    // What the window held, beside the percentile estimated from it: `Sum`,
+    // `Min` and `Max` are reported by the instrument outright and were read by
+    // nothing. Two observations, seeded a minute apart as one cumulative
+    // stream.
+    await expect(page.locator('.window')).toContainText('2 observations');
+    await expect(page.locator('.window')).toContainText('fastest');
+    await expect(page.locator('.window')).toContainText('worst');
+
     // A distribution has no single value, so the line is always a choice.
     await expect(page.getByRole('radio', { name: 'p99' })).toBeVisible();
     await page.getByRole('radio', { name: 'p50' }).click();

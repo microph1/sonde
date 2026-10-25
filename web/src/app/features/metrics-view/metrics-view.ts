@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { AsyncPipe } from '@angular/common';
+import { AsyncPipe, DecimalPipe } from '@angular/common';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatRippleModule } from '@angular/material/core';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -139,6 +139,7 @@ function share(value: number, of: number): string {
   selector: 'wt-metrics-view',
   imports: [
     AsyncPipe,
+    DecimalPipe,
     VolumeChart,
     Sparkline,
     TimeRangePicker,
@@ -239,6 +240,21 @@ function share(value: number, of: number): string {
           [unit]="unitLabel(metric)"
         />
 
+        <!-- What the window actually held. A percentile is an estimate read
+             out of buckets; these are the numbers the instrument reports
+             outright, and they say whether that p95 covers four calls or forty
+             thousand. -->
+        @if (window$ | async; as window) {
+          @if (window.observations > 0) {
+            <p class="window fx-flex fx-flex-wrap fx-gap-3 fx-mt-2">
+              <span><strong>{{ window.observations | number }}</strong> observations</span>
+              <span class="dim">mean <strong>{{ format(metric, window.mean) }}</strong></span>
+              <span class="dim">fastest <strong>{{ format(metric, window.smallest) }}</strong></span>
+              <span class="dim">worst <strong>{{ format(metric, window.largest) }}</strong></span>
+            </p>
+          }
+        }
+
         <p class="dim fx-mt-2">
           {{ metric.description || 'No description supplied by the instrument.' }}
           <span class="mono">
@@ -332,6 +348,15 @@ function share(value: number, of: number): string {
 
     /* One width for all of them, so a key with a long name does not make its
        own control twice the size of the one beside it. */
+    .window {
+      font-size: var(--fx-typography--1);
+    }
+
+    .window strong {
+      font-weight: 600;
+      color: var(--text);
+    }
+
     .breakdown mat-form-field {
       flex: none;
       width: 11rem;
@@ -534,6 +559,7 @@ export class MetricsView implements OnInit {
   protected readonly rate$ = this.store.rate$;
   protected readonly percentile$ = this.store.percentile$;
   protected readonly facets$ = this.store.facets$;
+  protected readonly window$ = this.store.window$;
   protected readonly split$ = this.store.split$;
   protected readonly where$ = this.store.where$;
 
@@ -772,6 +798,11 @@ export class MetricsView implements OnInit {
     }
 
     return count;
+  }
+
+  /** One value in the instrument's own unit, for the window summary. */
+  protected format(metric: MetricSummary, value: number): string {
+    return this.formatter(metric)(value);
   }
 
   protected unitLabel(metric: MetricSummary): string {
