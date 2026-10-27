@@ -62,11 +62,14 @@ export class GraphEndpoint {
    * link, whether it travelled over HTTP, a WebRTC data channel or Electron
    * IPC, because all three end up as an ordinary parent span id.
    *
-   * Self-edges are kept. Two processes that deliberately share a service name —
-   * a renderer and the main process it talks to over IPC — are one node on the
-   * map and the hop between them is often the interesting one; filtering
-   * `source != target` would delete exactly that. Group by something finer than
-   * the service name to pull them apart.
+   * Self-edges are kept only between two *processes* that share a group. A
+   * renderer and the main process it talks to over IPC are one node on the map
+   * and the hop between them is often the interesting one, so filtering
+   * `source != target` would delete exactly that. But a SERVER span and its own
+   * CLIENT children are one process talking to itself, which is not a hop at
+   * all: on production that was 2,581 of 2,770 calls, drawing a self-loop whose
+   * p95 was really an outbound call to a third party. `service.instance.id`
+   * tells the two apart.
    */
   @Lambda({ method: 'POST', path: '/services/graph' })
   public async graph(@Body() query: GraphQuery = {}): Promise<ServiceGraph> {
@@ -105,7 +108,8 @@ export class GraphEndpoint {
                 round(quantile(0.95)(child.Duration) / 1e6, 2) AS p95Ms,
                 arrayStringConcat(groupUniqArray(child.SpanKind), ', ') AS kinds
          FROM (
-           SELECT TraceId, SpanId, ParentSpanId, StatusCode, Duration, SpanKind, ${group} AS group
+           SELECT TraceId, SpanId, ParentSpanId, StatusCode, Duration, SpanKind, ${group} AS group,
+                  ResourceAttributes['service.instance.id'] AS instance
            FROM otel_traces
            WHERE Timestamp >= parseDateTime64BestEffort({from:String}, 9)
              AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
@@ -113,7 +117,8 @@ export class GraphEndpoint {
              AND ParentSpanId != ''
          ) AS child
          INNER JOIN (
-           SELECT TraceId, SpanId, ${group} AS group
+           SELECT TraceId, SpanId, ${group} AS group,
+                  ResourceAttributes['service.instance.id'] AS instance
            FROM otel_traces
            WHERE Timestamp >= parseDateTime64BestEffort({from:String}, 9) - INTERVAL {lookback:UInt32} MINUTE
              AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
@@ -121,6 +126,7 @@ export class GraphEndpoint {
          ) AS parent
            ON child.TraceId = parent.TraceId AND child.ParentSpanId = parent.SpanId
          WHERE source != '' AND target != ''
+           AND (source != target OR child.instance != parent.instance)
          GROUP BY source, target
          ORDER BY calls DESC`,
         params,
