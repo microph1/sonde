@@ -1,5 +1,5 @@
-import { getEndpointMetadataFromClass, getLambdaMetadataFromClass } from '@microgamma/apigator';
 import { getDebugger } from '@microphi/debug';
+import { getEndpointMetadataFromClass, getLambdaMetadataFromClass } from '@microphi/endpoint';
 import express, { Express, NextFunction, Request, Response } from 'express';
 
 import { AuthRoutes } from '../auth/auth-routes';
@@ -32,7 +32,7 @@ export function createApp(config: ApiConfig, endpoints: object[], auth: AuthRout
 }
 
 /**
- * Turns apigator's metadata into Express routes.
+ * Turns @microphi/endpoint's metadata into Express routes.
  *
  * The decorated method is called with `(req, res)` because that is the shape
  * `ExpressEventHandler` expects to destructure; the handler is what maps them
@@ -43,12 +43,16 @@ function register(app: Express, instance: object): void {
   const { basePath = '' } = getEndpointMetadataFromClass(klass) ?? {};
 
   for (const lambda of bySpecificity(getLambdaMetadataFromClass(klass) ?? [])) {
-    const path = toExpressPath(`${basePath}${lambda.path}`);
+    const path = toExpressPath(`${basePath}${lambda.path ?? ''}`);
     const method = String(lambda.method).toLowerCase() as 'get' | 'post' | 'delete' | 'put';
-    const handler = (instance as Record<string, Handler>)[lambda.name];
+    // The decorated method's own name, recorded by @Lambda. Typed as optional
+    // on the metadata, so an empty string stands in and fails the check below
+    // with a message rather than indexing the instance with `undefined`.
+    const name = lambda.name ?? '';
+    const handler = (instance as Record<string, Handler>)[name];
 
     if (typeof handler !== 'function') {
-      throw new Error(`${klass.name}.${lambda.name} is not callable`);
+      throw new Error(`${klass.name}.${name} is not callable`);
     }
 
     d('route', method.toUpperCase(), path);
@@ -64,13 +68,15 @@ function register(app: Express, instance: object): void {
  * how many parameters a path has removes the dependency on the order methods
  * happen to be declared in.
  */
-function bySpecificity<T extends { path: string }>(lambdas: T[]): T[] {
-  const parameters = (path: string): number => (path.match(/\{/g) ?? []).length;
+function bySpecificity<T extends { path?: string }>(lambdas: T[]): T[] {
+  // `path` is optional on the metadata: a @Lambda with no path of its own
+  // answers on the endpoint's base path, which is as literal as it gets.
+  const parameters = (path = ''): number => (path.match(/\{/g) ?? []).length;
 
   return [...lambdas].sort((a, b) => parameters(a.path) - parameters(b.path));
 }
 
-/** apigator declares AWS-style `/traces/{traceId}`; Express wants `:traceId`. */
+/** @Lambda declares AWS-style `/traces/{traceId}`; Express wants `:traceId`. */
 export function toExpressPath(path: string): string {
   return path.replace(/\{(\w+)\}/g, ':$1');
 }

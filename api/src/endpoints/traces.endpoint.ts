@@ -1,5 +1,5 @@
-import { Body, Endpoint, Lambda, Path } from '@microgamma/apigator';
 import { Inject } from '@microphi/di';
+import { Body, Endpoint, Lambda, Path } from '@microphi/endpoint';
 
 import { InjectableEndpoint } from '../server/injectable-endpoint';
 

@@ -10,7 +10,7 @@ import { Sessions } from './session';
 const d = getDebugger('sonde:api:auth');
 
 /**
- * The login flow, mounted as plain Express routes rather than as an apigator
+ * The login flow, mounted as plain Express routes rather than as an
  * `@Endpoint`.
  *
  * Those decorators describe request-in/JSON-out handlers; every route here

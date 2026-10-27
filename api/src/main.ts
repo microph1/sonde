@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 
-import { LambdaDefaultHandler } from '@microgamma/apigator';
+import { LambdaDefaultHandler } from '@microphi/endpoint';
 import { DI, bootstrap, injector } from '@microphi/di';
 import { getDebugger } from '@microphi/debug';
 

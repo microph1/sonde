@@ -1,8 +1,8 @@
 /**
  * Point the TypeScript projects at published packages.
  *
- * `api` and `web` depend on @microphi/* and @microgamma/* through `file:` paths
- * into sibling checkouts. That is deliberate: those packages are developed
+ * `api` and `web` depend on @microphi/* through `file:` paths into the sibling
+ * monorepo checkout. That is deliberate: those packages are developed
  * alongside this one, and a `file:` dependency means a change there shows up
  * here without a publish. It also means the tree only installs on a machine
  * that has those checkouts - which CI, and anyone who clones this repository,
@@ -18,10 +18,13 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 const PUBLISHED = {
   '@microphi/debug': '^2.11.0',
-  '@microphi/di': '^2.11.0',
+  // 2.12.2 and not 2.12.0: `injector()` on an undecorated class threw, and
+  // `@Lambda` resolves its instance exactly that way, so every endpoint call
+  // answered "Is X annotated with @Injectable()" at runtime on anything older.
+  '@microphi/di': '^2.12.2',
   '@microphi/store': '^2.11.0',
   '@microphi/styles': '^1.5.0',
-  '@microgamma/apigator': '^2.1.0',
+  '@microphi/endpoint': '^2.3.0',
 };
 
 for (const project of process.argv.slice(2)) {
