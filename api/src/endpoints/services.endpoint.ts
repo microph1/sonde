@@ -1,5 +1,5 @@
-import { Endpoint, Lambda, Path } from '@microgamma/apigator';
 import { Inject } from '@microphi/di';
+import { Endpoint, Lambda, Path } from '@microphi/endpoint';
 
 import { InjectableEndpoint } from '../server/injectable-endpoint';
 import { GROUPINGS, groupingExpression } from './grouping';

@@ -12,9 +12,9 @@
     "test": "node --test lib/**/*.spec.js"
   },
   "dependencies": {
-    "@microgamma/apigator": "file:../../microgamma/packages/apigator",
     "@microphi/debug": "file:../../drugo/microphi/packages/debug",
     "@microphi/di": "file:../../drugo/microphi/packages/di",
+    "@microphi/endpoint": "file:../../drugo/microphi/packages/endpoint",
     "express": "^5.2.1",
     "jose": "^6.2.12",
     "openid-client": "^6.8.8",

@@ -1,6 +1,6 @@
-import { ExpressEventHandler } from '@microgamma/apigator';
 import { Injectable } from '@microphi/di';
 import { getDebugger } from '@microphi/debug';
+import { ExpressEventHandler } from '@microphi/endpoint';
 import { pipeline } from 'node:stream/promises';
 import type { Request, Response } from 'express';
 
@@ -10,7 +10,7 @@ import { isStreamingResult } from '../clickhouse/streaming-result';
 const d = getDebugger('sonde:api:handler');
 
 /**
- * Adds streaming to apigator's Express handler.
+ * Adds streaming to @microphi/endpoint's Express handler.
  *
  * The default calls `res.json(retValue)`, which requires the whole result in
  * memory. An endpoint that returns a `StreamingResult` instead gets its body
@@ -89,7 +89,7 @@ export class StreamingEventHandler extends ExpressEventHandler {
   }
 
   /**
-   * apigator has `@Path`, `@Body` and `@Header` but no `@Query`, and an
+   * @microphi/endpoint has `@Path`, `@Body` and `@Header` but no `@Query`, and an
    * `EventSource` can only issue a GET with no body — so a tail's filters have
    * nowhere else to travel. Merging the query string in lets those endpoints
    * read them with `@Path`; route params still win on a collision.
@@ -99,7 +99,7 @@ export class StreamingEventHandler extends ExpressEventHandler {
   }
 
   /**
-   * apigator's convention is a `[404] message` prefix on the error; anything
+   * The handler's convention is a `[404] message` prefix on the error; anything
    * unprefixed is ours and therefore a 500.
    *
    * Once the body has started there is no status left to send, so the only

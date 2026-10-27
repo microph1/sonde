@@ -1,5 +1,5 @@
-import { Body, Endpoint, Lambda } from '@microgamma/apigator';
 import { Inject } from '@microphi/di';
+import { Body, Endpoint, Lambda } from '@microphi/endpoint';
 
 import { ClickHouseService, QueryParams } from '../clickhouse/clickhouse.service';
 import { configFromEnv } from '../config';

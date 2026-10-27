@@ -1,7 +1,7 @@
 import { ClassNameSymbol, InjectableDecorator } from '@microphi/di';
 
 /**
- * `@Injectable()` for classes that also carry apigator's `@Lambda`.
+ * `@Injectable()` for classes that also carry `@Lambda`.
  *
  * `@Injectable()` registers a *subclass* and keys the container off a static
  * `[ClassNameSymbol]` defined on it. `@Lambda` resolves its instance with
@@ -12,7 +12,9 @@ import { ClassNameSymbol, InjectableDecorator } from '@microphi/di';
  *
  * Copying the key onto the original makes both spellings of the class resolve
  * to the same registration, and therefore to the same singleton. The real fix
- * belongs in apigator, which should resolve the decorated class.
+ * belongs in @microphi/di, and landed there in 2.12.2: once the API runs on
+ * that, `injector()` resolves an undecorated class on its own and this shim is
+ * redundant rather than load-bearing.
  */
 export function InjectableEndpoint(): ClassDecorator {
   return (target) => {
