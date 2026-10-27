@@ -13,6 +13,7 @@ import { AppScope } from '../../core/app-scope';
 import { GraphEdge, GraphStore, ServiceGraph } from '../../core/graph.store';
 import { DEFAULT_RANGE, Range } from '../../core/services.store';
 import { fromParams, sameRange } from '../../core/time-range';
+import { DurationPipe } from '../../shared/duration-pipe';
 import { PageHeader } from '../../shared/page-header';
 import { TimeRangePicker } from '../../shared/time-range-picker';
 
@@ -97,6 +98,7 @@ const ERROR_THRESHOLD = 0.01;
   imports: [
     AsyncPipe,
     DecimalPipe,
+    DurationPipe,
     RouterLink,
     PageHeader,
     TimeRangePicker,
@@ -110,7 +112,7 @@ const ERROR_THRESHOLD = 0.01;
   template: `
     <wt-page-header
       heading="Map"
-      subtitle="Who calls whom, read from the spans themselves — an edge is a parent and a child that landed in different services."
+      subtitle="Who calls whom, read from the spans themselves — an edge is a parent and a child that landed in different processes."
     >
       <mat-form-field subscriptSizing="dynamic" class="grouping">
         <mat-label>Group by</mat-label>
@@ -240,7 +242,7 @@ const ERROR_THRESHOLD = 0.01;
                 <td class="mono">{{ edge.target }}</td>
                 <td class="num">{{ edge.calls | number }}</td>
                 <td class="num" [class.bad]="edge.errors > 0">{{ edge.errors | number }}</td>
-                <td class="num">{{ edge.p95Ms | number: '1.0-1' }} ms</td>
+                <td class="num">{{ edge.p95Ms * 1e6 | duration }}</td>
                 <td class="dim">{{ edge.kinds }}</td>
                 <td>
                   <a [routerLink]="scope.link('traces')" [queryParams]="{ service: edge.target }">traces</a>
@@ -253,7 +255,7 @@ const ERROR_THRESHOLD = 0.01;
                 <td class="mono">{{ entry.target }}</td>
                 <td class="num">{{ entry.calls | number }}</td>
                 <td class="num" [class.bad]="entry.errors > 0">{{ entry.errors | number }}</td>
-                <td class="num">{{ entry.p95Ms | number: '1.0-1' }} ms</td>
+                <td class="num">{{ entry.p95Ms * 1e6 | duration }}</td>
                 <td class="dim">{{ entry.kinds }}</td>
                 <td>
                   <a [routerLink]="scope.link('traces')" [queryParams]="{ service: entry.target }">traces</a>
