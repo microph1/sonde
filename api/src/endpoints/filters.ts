@@ -89,3 +89,18 @@ export const SPAN_WINDOW_SQL = `
   AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
   AND Timestamp + toIntervalNanosecond(Duration) >= parseDateTime64BestEffort({from:String}, 9)
 `;
+
+/**
+ * The same window with the service filter left out.
+ *
+ * For queries that select traces by one of their spans and then describe the
+ * whole trace: the service filter says which traces to keep, not which spans
+ * may be counted once a trace is kept. Applied to both halves, a search for
+ * `service=musicbox-web` reported "1 service" on traces that visibly ran
+ * through two, which made joined traces look unjoined.
+ */
+export const TRACE_WINDOW_SQL = `
+  ({app:String} = '' OR ResourceAttributes['sonde.app'] = {app:String})
+  AND Timestamp <= parseDateTime64BestEffort({to:String}, 9)
+  AND Timestamp + toIntervalNanosecond(Duration) >= parseDateTime64BestEffort({from:String}, 9)
+`;

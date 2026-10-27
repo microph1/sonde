@@ -8,7 +8,7 @@ import { SseResult } from '../clickhouse/sse-result';
 import { StreamingResult } from '../clickhouse/streaming-result';
 import { tail } from '../clickhouse/tail';
 import { configFromEnv } from '../config';
-import { SPAN_WINDOW_SQL, SearchFilters, baseParams } from './filters';
+import { SPAN_WINDOW_SQL, SearchFilters, TRACE_WINDOW_SQL, baseParams } from './filters';
 
 export interface TraceFilters extends SearchFilters {
   /** Only spans at least this slow, in milliseconds. */
@@ -86,7 +86,7 @@ export class TracesEndpoint {
               max(toUnixTimestamp64Nano(Timestamp) + Duration)
                 - min(toUnixTimestamp64Nano(Timestamp)) AS TotalDuration
        FROM otel_traces
-       WHERE ${SPAN_WINDOW_SQL}
+       WHERE ${TRACE_WINDOW_SQL}
          AND TraceId IN (
            SELECT TraceId
            FROM otel_traces
