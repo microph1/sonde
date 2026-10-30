@@ -81,13 +81,23 @@ function toUserSpace(event: { clientX: number; clientY: number }, svg: SVGSVGEle
  * baseline sits below the circle. */
 const LABEL_ADVANCE = 7.2;
 const LABEL_DROP = 20;
-/** How far the entry marker reaches to the left of the node it points at. */
+/** How far the entry marker reaches out of the node it points at, and at what
+ * angle above the horizontal. Above, because straight in from the left is
+ * where the arrivals now fan to, and a dashed stub landing under a real
+ * arrowhead reads as one confused edge rather than two facts. */
 const ENTRY_REACH = 35;
+const ENTRY_ANGLE = 70;
 const FRAME_PAD = 8;
 
 const COLUMN = 260;
 const ROW = 110;
 const MARGIN = { x: 130, y: 70 };
+/** How far apart, in radians, two edges leaving or meeting the same node are
+ * set, and the widest the whole fan is allowed to open to. */
+const FAN_STEP = 0.38;
+const FAN_ARC = 1.7;
+/** How far an edge is bowed aside for each column it passes over. */
+const BOW = 70;
 /** Above this share of spans in error, a node or an edge is drawn as failing.
  * One percent rather than any error at all: a trace in a hundred going wrong is
  * a different fact from a service being down. */
@@ -192,7 +202,12 @@ const ERROR_THRESHOLD = 0.01;
                 @if (node.entry) {
                   <!-- A span whose parent never arrived: the start of a trace,
                        or a hop nobody instrumented. Marked rather than hidden. -->
-                  <path class="entry" [attr.d]="'M' + (-node.r - 26) + ' 0 H' + (-node.r - 6)" marker-end="url(#arrow)" />
+                  <path
+                    class="entry"
+                    [attr.d]="'M' + (-node.r - 26) + ' 0 H' + (-node.r - 6)"
+                    [attr.transform]="'rotate(' + entryAngle + ')'"
+                    marker-end="url(#arrow)"
+                  />
                 }
                 <circle [attr.r]="node.r" />
                 <text class="label" [attr.y]="node.r + 16">{{ node.id }}</text>
@@ -320,6 +335,9 @@ const ERROR_THRESHOLD = 0.01;
          fitting, so the graph arrives whole and centred whatever its shape. */
       inline-size: 100%;
       block-size: 100%;
+      /* Dragging a node otherwise sweeps a text selection across every label
+         it passes, and the map ends the gesture highlighted blue. */
+      user-select: none;
     }
 
     .edge {
@@ -342,6 +360,17 @@ const ERROR_THRESHOLD = 0.01;
       font-size: 11px;
       text-anchor: middle;
       font-variant-numeric: tabular-nums;
+    }
+
+    /* A label that lands on a stroke or a circle is unreadable without this,
+       and with enough services some of them always will. paint-order is what
+       puts the halo under the glyphs instead of over them. */
+    .edge-label,
+    .node .label {
+      paint-order: stroke;
+      stroke: var(--surface);
+      stroke-width: 3px;
+      stroke-linejoin: round;
     }
 
     .entry {
@@ -433,6 +462,8 @@ export class GraphView implements OnInit {
 
   /** Set while a drag is in progress, read by the template for the cursor. */
   protected panning = false;
+
+  protected readonly entryAngle = ENTRY_ANGLE;
 
   /** Where the pointer went down, and whether it has travelled far enough to be
    * a drag rather than a click on a node. */
@@ -594,6 +625,23 @@ export class GraphView implements OnInit {
 }
 
 /**
+ * Where one edge of several meets a circle.
+ *
+ * Every edge used to leave from the same point and arrive at the same one, so
+ * three calls out of one service left as a single ribbon and only came apart
+ * halfway across. Spreading them over an arc makes three calls read as three;
+ * ordering that arc by where the other end sits keeps them from crossing on
+ * the way out.
+ */
+function anchor(node: PlacedNode, index: number, count: number, side: 1 | -1, pad: number) {
+  const spread = Math.min(FAN_ARC, FAN_STEP * Math.max(0, count - 1));
+  const angle = count > 1 ? spread * (index / (count - 1) - 0.5) : 0;
+  const r = node.r + pad;
+
+  return { x: node.x + side * r * Math.cos(angle), y: node.y + r * Math.sin(angle) };
+}
+
+/**
  * Layered left-to-right, not force-directed.
  *
  * A physics simulation on a graph this size spends its time settling and lands
@@ -673,6 +721,30 @@ function layout(graph: ServiceGraph): Layout {
 
   const busiestEdge = Math.max(...graph.edges.map((edge) => edge.calls), 1);
 
+  // Which slot each edge takes on the rim of the node it leaves and of the one
+  // it meets. Sorted by where the far end sits, so the fan comes out in the
+  // same order it arrives in and no two edges have to cross to reach it.
+  const departures = new Map<string, GraphEdge[]>();
+  const arrivals = new Map<string, GraphEdge[]>();
+  const row = (id: string) => placed.get(id)?.y ?? 0;
+
+  for (const edge of graph.edges) {
+    if (edge.source === edge.target || !placed.has(edge.source) || !placed.has(edge.target)) {
+      continue;
+    }
+
+    departures.set(edge.source, [...(departures.get(edge.source) ?? []), edge]);
+    arrivals.set(edge.target, [...(arrivals.get(edge.target) ?? []), edge]);
+  }
+
+  for (const list of departures.values()) {
+    list.sort((a, b) => row(a.target) - row(b.target));
+  }
+
+  for (const list of arrivals.values()) {
+    list.sort((a, b) => row(a.source) - row(b.source));
+  }
+
   const edges = graph.edges
     .map((edge) => {
       const source = placed.get(edge.source);
@@ -706,17 +778,32 @@ function layout(graph: ServiceGraph): Layout {
         };
       }
 
-      const from = { x: source.x + source.r, y: source.y };
-      const to = { x: target.x - target.r - 8, y: target.y };
+      const out = departures.get(edge.source) ?? [];
+      const into = arrivals.get(edge.target) ?? [];
+      const from = anchor(source, out.indexOf(edge), out.length, 1, 0);
+      const to = anchor(target, into.indexOf(edge), into.length, -1, 9);
+
+      // An edge that skips a column is drawn straight over whatever stands in
+      // the middle: on production `musicbox-web` calling `microgamma-signaling`
+      // crossed `musicbox-streamer` and looked like it ended there. Bowing it
+      // clear per column skipped, away from the row it would cross, costs a
+      // longer curve and buys an unambiguous one.
+      const skipped = Math.max(0, Math.round((target.x - source.x) / COLUMN) - 1);
+      const lift = skipped * BOW * (target.y <= source.y ? -1 : 1);
       const bend = (to.x - from.x) / 2;
+      const c1 = { x: from.x + bend, y: from.y + lift };
+      const c2 = { x: to.x - bend, y: to.y + lift };
 
       return {
         edge,
-        path: `M${from.x} ${from.y} C${from.x + bend} ${from.y}, ${to.x - bend} ${to.y}, ${to.x} ${to.y}`,
+        path: `M${from.x} ${from.y} C${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${to.x} ${to.y}`,
         width,
         failing,
-        labelX: (from.x + to.x) / 2,
-        labelY: (from.y + to.y) / 2 - 8,
+        // The curve's own midpoint rather than the midpoint of the line between
+        // its ends. With a bow those are different points, and the label sat on
+        // whatever the edge had just arced around.
+        labelX: (from.x + 3 * c1.x + 3 * c2.x + to.x) / 8,
+        labelY: (from.y + 3 * c1.y + 3 * c2.y + to.y) / 8 - 7,
       };
     })
     .filter((edge): edge is PlacedEdge => edge !== null);
@@ -726,7 +813,7 @@ function layout(graph: ServiceGraph): Layout {
     edges.filter((placed) => placed.edge.source === placed.edge.target).map((placed) => placed.edge.source),
   );
 
-  return { nodes, edges, viewBox: frame(nodes, looping) };
+  return { nodes, edges, viewBox: frame(nodes, looping, edges) };
 }
 
 /**
@@ -740,7 +827,7 @@ function layout(graph: ServiceGraph): Layout {
  * drew outside the card — and became a clipped arc the moment the map could
  * pan, which is the honest rendering of a frame that was always too small.
  */
-function frame(nodes: PlacedNode[], looping: ReadonlySet<string>): string {
+function frame(nodes: PlacedNode[], looping: ReadonlySet<string>, edges: PlacedEdge[]): string {
   if (nodes.length === 0) {
     return '0 0 1 1';
   }
@@ -755,10 +842,20 @@ function frame(nodes: PlacedNode[], looping: ReadonlySet<string>): string {
     // one. Monospace, so its width is countable rather than measurable.
     const half = Math.max(node.r, (node.id.length * LABEL_ADVANCE) / 2);
 
-    lefts.push(node.x - half, node.x - node.r - (node.entry ? ENTRY_REACH : 0));
+    lefts.push(node.x - half);
     rights.push(node.x + half);
     tops.push(node.y - node.r);
     bottoms.push(node.y + node.r + LABEL_DROP);
+
+    if (node.entry) {
+      // The marker leaves the node up and to the left, so it is the top of the
+      // frame it threatens rather than only the side.
+      const radians = (ENTRY_ANGLE * Math.PI) / 180;
+      const reach = node.r + ENTRY_REACH;
+
+      lefts.push(node.x - reach * Math.cos(radians));
+      tops.push(node.y - reach * Math.sin(radians));
+    }
 
     if (looping.has(node.id)) {
       const loop = node.r + 18;
@@ -768,6 +865,15 @@ function frame(nodes: PlacedNode[], looping: ReadonlySet<string>): string {
       lefts.push(node.x - loop);
       rights.push(node.x + loop);
     }
+  }
+
+  for (const edge of edges) {
+    // A bowed edge reaches past both nodes it joins, and its label sits on the
+    // apex of the bow. Both are drawn, so both belong inside the frame.
+    tops.push(edge.labelY - 8);
+    bottoms.push(edge.labelY + 12);
+    lefts.push(edge.labelX - 16);
+    rights.push(edge.labelX + 16);
   }
 
   const x = Math.min(...lefts) - FRAME_PAD;
