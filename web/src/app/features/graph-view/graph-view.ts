@@ -7,7 +7,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { BehaviorSubject, distinctUntilChanged, map, skip } from 'rxjs';
+import { BehaviorSubject, combineLatest, distinctUntilChanged, map, skip } from 'rxjs';
 
 import { AppScope } from '../../core/app-scope';
 import { GraphEdge, GraphStore, ServiceGraph } from '../../core/graph.store';
@@ -35,6 +35,11 @@ interface PlacedEdge {
   readonly failing: boolean;
   readonly labelX: number;
   readonly labelY: number;
+}
+
+interface Point {
+  readonly x: number;
+  readonly y: number;
 }
 
 interface Layout {
@@ -142,7 +147,7 @@ const ERROR_THRESHOLD = 0.01;
           <!-- The gestures belong to the drawing, not to the card. On the card
                they also caught the zoom buttons, and a pointer capture taken on
                the way down meant the button never saw its own click. -->
-          <svg #svg [attr.viewBox]="layout.viewBox" role="img"
+          <svg #svg [attr.viewBox]="frozen ?? layout.viewBox" role="img"
                [attr.aria-label]="describe(layout)"
                (wheel)="zoom($event, $any(svg))"
                (pointerdown)="grab($event)"
@@ -191,7 +196,9 @@ const ERROR_THRESHOLD = 0.01;
               <g
                 class="node"
                 [class.failing]="node.failing"
+                [class.moving]="node.id === moving?.id"
                 [attr.transform]="'translate(' + node.x + ',' + node.y + ')'"
+                (pointerdown)="grabNode($event, node, layout.viewBox)"
                 (click)="openTraces(node.id)"
                 [attr.tabindex]="0"
                 (keydown.enter)="openTraces(node.id)"
@@ -226,8 +233,8 @@ const ERROR_THRESHOLD = 0.01;
             <button mat-icon-button type="button" aria-label="Zoom out" matTooltip="Zoom out" (click)="step(1 / 1.3, $any(svg))">
               <mat-icon>remove</mat-icon>
             </button>
-            @if ((moved$ | async) === true) {
-              <button mat-icon-button type="button" aria-label="Fit the map to the frame" matTooltip="Fit" (click)="reset()">
+            @if ((touched$ | async) === true) {
+              <button mat-icon-button type="button" aria-label="Put the map back as it was laid out" matTooltip="Reset" (click)="reset()">
                 <mat-icon>fit_screen</mat-icon>
               </button>
             }
@@ -381,7 +388,21 @@ const ERROR_THRESHOLD = 0.01;
     }
 
     .node {
-      cursor: pointer;
+      /* Grab rather than pointer: a node is draggable as well as clickable,
+         and the cursor is the only thing that says so. */
+      cursor: grab;
+    }
+
+    .node.moving {
+      cursor: grabbing;
+    }
+
+    /* A node is focusable because it is a link, and pressing on one to drag it
+       focuses it — which drew a ring around whatever you were moving. The ring
+       is for the keyboard, which is what :focus-visible already means
+       everywhere except on an SVG element in Chrome. */
+    .node:focus:not(:focus-visible) {
+      outline: none;
     }
 
     .node circle {
@@ -439,7 +460,20 @@ export class GraphView implements OnInit {
   protected readonly graph$ = this.store.graph$;
   protected readonly range$ = this.store.range$;
   protected readonly group$ = this.store.group$;
-  protected readonly layout$ = this.store.graph$.pipe(map((graph) => layout(graph)));
+
+  /**
+   * Where the user has dragged nodes to.
+   *
+   * View state like the pan and the zoom, and for the same reasons — except
+   * that it is keyed by node id rather than by position, so a node keeps where
+   * it was put across a refresh or a change of time range. An arrangement
+   * someone made to read a particular shape survives the data moving under it.
+   */
+  private readonly moved$$ = new BehaviorSubject<ReadonlyMap<string, Point>>(new Map());
+
+  protected readonly layout$ = combineLatest([this.store.graph$, this.moved$$]).pipe(
+    map(([graph, moved]) => layout(graph, moved)),
+  );
 
   /**
    * Where the map is being looked at from.
@@ -455,9 +489,12 @@ export class GraphView implements OnInit {
   );
 
   /** Whether there is anything to go back from, which is what decides if the
-   * fit button is worth the space. */
-  protected readonly moved$ = this.view$$.pipe(
-    map((view) => view.scale !== HOME.scale || view.x !== HOME.x || view.y !== HOME.y),
+   * reset button is worth the space. */
+  protected readonly touched$ = combineLatest([this.view$$, this.moved$$]).pipe(
+    map(
+      ([view, moved]) =>
+        moved.size > 0 || view.scale !== HOME.scale || view.x !== HOME.x || view.y !== HOME.y,
+    ),
   );
 
   /** Set while a drag is in progress, read by the template for the cursor. */
@@ -465,10 +502,31 @@ export class GraphView implements OnInit {
 
   protected readonly entryAngle = ENTRY_ANGLE;
 
+  /**
+   * The frame as it was when a node drag began, or null when none is running.
+   *
+   * The viewBox is measured from what is drawn, so moving a node resizes it,
+   * and resizing it rescales everything inside — the node slid out from under
+   * the pointer that was dragging it, faster the closer it got to an edge.
+   * Holding the frame still for the length of the gesture makes the node
+   * follow the pointer exactly; it catches up on release.
+   */
+  protected frozen: string | null = null;
+
   /** Where the pointer went down, and whether it has travelled far enough to be
    * a drag rather than a click on a node. */
   private from: { x: number; y: number } | null = null;
   private travelled = 0;
+
+  /**
+   * The node being dragged: which one, where it was when the drag started, and
+   * where the pointer was. Both origins are kept rather than accumulating
+   * deltas, so the node tracks the pointer exactly instead of drifting by the
+   * slop it was allowed before the gesture counted as a drag.
+   *
+   * Null while the drag is panning the map instead.
+   */
+  protected moving: { id: string; at: Point; pointer: Point } | null = null;
 
   constructor() {
     // Switching app changes a path parameter, and Angular reuses the component
@@ -548,6 +606,27 @@ export class GraphView implements OnInit {
     this.from = { x: event.clientX, y: event.clientY };
   }
 
+  /**
+   * Start dragging one node rather than the whole map.
+   *
+   * The layered layout is right about who calls whom and says nothing about
+   * what you happen to be looking for, so being able to pull one service out
+   * of the pile is worth the gesture. It stops propagating because the svg
+   * underneath would otherwise begin a pan with the same pointer.
+   */
+  protected grabNode(event: PointerEvent, node: PlacedNode, viewBox: string): void {
+    event.stopPropagation();
+
+    this.travelled = 0;
+    this.frozen = viewBox;
+    this.from = { x: event.clientX, y: event.clientY };
+    this.moving = {
+      id: node.id,
+      at: { x: node.x, y: node.y },
+      pointer: { x: event.clientX, y: event.clientY },
+    };
+  }
+
   protected drag(event: PointerEvent, svg: SVGSVGElement): void {
     if (!this.from) {
       return;
@@ -577,16 +656,36 @@ export class GraphView implements OnInit {
 
     const view = this.view$$.value;
 
+    if (this.moving) {
+      // A node is positioned in the layout's own coordinates, and the pointer
+      // moves in the page's, with the viewBox fit and the current zoom between
+      // them: `perPixel` undoes the first, the scale the second.
+      const moving = this.moving;
+      const at = {
+        x: moving.at.x + (event.clientX - moving.pointer.x) / perPixel / view.scale,
+        y: moving.at.y + (event.clientY - moving.pointer.y) / perPixel / view.scale,
+      };
+
+      this.moved$$.next(new Map(this.moved$$.value).set(moving.id, at));
+
+      return;
+    }
+
     this.view$$.next({ ...view, x: view.x + dx / perPixel, y: view.y + dy / perPixel });
   }
 
   protected release(): void {
     this.panning = false;
     this.from = null;
+    this.moving = null;
+    this.frozen = null;
   }
 
+  /** Back to the layout as it comes out of the data: the grid, unzoomed and
+   * unpanned, with every node the user moved put back. */
   protected reset(): void {
     this.view$$.next(HOME);
+    this.moved$$.next(new Map());
   }
 
   /**
@@ -648,8 +747,13 @@ function anchor(node: PlacedNode, index: number, count: number, side: 1 | -1, pa
  * somewhere different every reload, which makes the picture unreadable as a
  * thing you return to. Depth from the entry points puts callers left of what
  * they call, and the layout is the same every time for the same data.
+ *
+ * `moved` overrides the grid for nodes the user has dragged. It is applied
+ * here rather than on top of a finished layout so that everything derived from
+ * a position — which rim an edge leaves by, how far it bows, where the frame
+ * ends — is derived from where the node actually is.
  */
-function layout(graph: ServiceGraph): Layout {
+function layout(graph: ServiceGraph, moved: ReadonlyMap<string, Point> = new Map()): Layout {
   const between = graph.edges.filter((edge) => edge.source !== edge.target);
   const depths = new Map<string, number>();
 
@@ -705,13 +809,14 @@ function layout(graph: ServiceGraph): Layout {
       // Area, not radius, carries the count: a node with ten times the spans
       // should look ten times the node, and radius would make it a hundred.
       const r = 14 + 26 * Math.sqrt(node.spans / busiest);
+      const at = moved.get(id);
 
       placed.set(id, {
         id,
         spans: node.spans,
         errors: node.errors,
-        x: MARGIN.x + depth * COLUMN,
-        y: MARGIN.y + (index + (tallest - ids.length) / 2) * ROW,
+        x: at?.x ?? MARGIN.x + depth * COLUMN,
+        y: at?.y ?? MARGIN.y + (index + (tallest - ids.length) / 2) * ROW,
         r,
         failing: node.spans > 0 && node.errors / node.spans > ERROR_THRESHOLD,
         entry: entries.has(id),
