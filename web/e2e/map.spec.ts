@@ -20,6 +20,35 @@ function node(page: Page, service: string) {
   return page.locator('figure.map .node').filter({ hasText: service }).first();
 }
 
+/**
+ * A point in the frame with nothing drawn on it.
+ *
+ * A drag that starts on a node moves that node, so panning has to begin on the
+ * background — and where the background is depends on how big the graph came
+ * out, which depends on what the suite has seeded by the time this runs. So it
+ * is found rather than guessed at.
+ */
+async function emptySpot(page: Page): Promise<{ x: number; y: number }> {
+  const box = await page.locator('figure.map').boundingBox();
+
+  expect(box, 'the map should be on the page').not.toBeNull();
+
+  return page.evaluate((frame) => {
+    for (let down = 0.92; down > 0.05; down -= 0.06) {
+      for (let across = 0.08; across < 0.95; across += 0.06) {
+        const x = frame.x + frame.width * across;
+        const y = frame.y + frame.height * down;
+
+        if (document.elementFromPoint(x, y)?.classList.contains('root-svg')) {
+          return { x, y };
+        }
+      }
+    }
+
+    throw new Error('the map is drawn on every part of its frame');
+  }, box!);
+}
+
 test.describe('map', () => {
   test('draws an edge for a call that crossed services', async ({ page, request }) => {
     const caller = uniqueService('caller');
@@ -93,20 +122,12 @@ test.describe('map', () => {
     await page.goto('/all/map');
     await expect(page.locator('figure.map .node').first()).toBeVisible();
 
-    const figure = page.locator('figure.map');
-    const box = await figure.boundingBox();
-
-    expect(box, 'the map should be on the page').not.toBeNull();
-
     const before = await page.locator('figure.map g[mapContext]').getAttribute('transform');
+    const from = await emptySpot(page);
 
-    // Low in the frame, where the graph itself is not: a drag that starts on a
-    // node moves the node instead, which is a different test.
-    const y = box!.y + box!.height - 40;
-
-    await page.mouse.move(box!.x + box!.width / 2, y);
+    await page.mouse.move(from.x, from.y);
     await page.mouse.down();
-    await page.mouse.move(box!.x + box!.width / 2 + 90, y - 40, { steps: 6 });
+    await page.mouse.move(from.x + 90, from.y - 40, { steps: 6 });
     await page.mouse.up();
 
     await expect

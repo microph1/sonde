@@ -36,6 +36,10 @@ interface NodeData {
   readonly r: number;
   readonly failing: boolean;
   readonly entry: boolean;
+  /** How far off the equator the diagonal handles sit, and how far that puts
+   * them back from the side of the box. See the handles in the template. */
+  readonly spread: number;
+  readonly inset: number;
 }
 
 interface EdgeData {
@@ -52,9 +56,17 @@ interface Flow {
   readonly neighbours: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
-/** Left-to-right layered layout. `ranksep` is generous because an edge carries
- * a call count in the middle of it and wants somewhere to put it. */
-const DAGRE = { rankdir: 'LR', nodesep: 48, ranksep: 150, marginx: 24, marginy: 24 };
+/**
+ * Left-to-right layered layout.
+ *
+ * Both separations are far larger than dagre's defaults, and larger than a
+ * diagram of boxes would want. A node here is a circle with a name hanging
+ * under it and up to a handful of edges meeting its rim, and dagre spaces the
+ * boxes it was given without knowing about any of that: at the default the
+ * ranks packed into a tight band that read as one knot. The space is what
+ * makes an edge followable.
+ */
+const DAGRE = { rankdir: 'LR', nodesep: 130, ranksep: 210, marginx: 32, marginy: 32 };
 
 /** Room under a circle for the service name, reserved in the box dagre spaces
  * so two labels in the same rank cannot collide. */
@@ -70,6 +82,33 @@ const ERROR_THRESHOLD = 0.01;
 
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 6;
+
+/** Where the off-equator handles sit, as a fraction of the radius. */
+const HANDLE_SPREAD = 0.66;
+
+type Side = 'left' | 'right';
+
+const OPPOSITE: Record<Side, Side> = { left: 'right', right: 'left' };
+
+/** The handles declared on each side of a node, top to bottom. */
+const RIM: Record<Side, readonly string[]> = {
+  right: ['r-up', 'r', 'r-down'],
+  left: ['l-up', 'l', 'l-down'],
+};
+
+/** Which of the three a given edge takes. One edge uses the equator; two take
+ * the outer pair, so neither is on it; three take all of them. */
+function slot(index: number, count: number): number {
+  if (count <= 1) {
+    return 1;
+  }
+
+  if (count === 2) {
+    return index === 0 ? 0 : 2;
+  }
+
+  return Math.min(2, Math.round((index / (count - 1)) * 2));
+}
 
 @Component({
   selector: 'wt-graph-view',
@@ -179,14 +218,46 @@ const MAX_ZOOM = 6;
                 }
                 <span class="name">{{ node.id }}</span>
 
-                <!-- Four of them, and the edges float: the library then meets
-                     the circle on the side the other end actually is, which is
-                     what stops three calls out of one service leaving as one
-                     ribbon. -->
+                <!-- The edges float, so the library meets the circle on the
+                     side the other end actually is. Four handles is not enough
+                     rim to choose from: three services called by one, all of
+                     them to its right, were handed the same point and left as
+                     one ribbon. These are eight: the diagonals are placed by
+                     offset, since a handle's position only names the four
+                     sides, and pulled in because a point two thirds of the way
+                     up the side of a circle is not as far out as its equator. -->
                 <handle type="source" position="top" id="t" />
-                <handle type="source" position="right" id="r" />
                 <handle type="source" position="bottom" id="b" />
+                <handle type="source" position="right" id="r" />
                 <handle type="source" position="left" id="l" />
+                <handle
+                  type="source"
+                  position="right"
+                  id="r-up"
+                  [offsetX]="node.inset"
+                  [offsetY]="node.spread"
+                />
+                <handle
+                  type="source"
+                  position="right"
+                  id="r-down"
+                  [offsetX]="node.inset"
+                  [offsetY]="-node.spread"
+                />
+                <handle
+                  type="source"
+                  position="left"
+                  id="l-up"
+                  [offsetX]="-node.inset"
+                  [offsetY]="node.spread"
+                />
+                <handle
+                  type="source"
+                  position="left"
+                  id="l-down"
+                  [offsetX]="-node.inset"
+                  [offsetY]="-node.spread"
+                />
               </div>
             </ng-template>
           </vflow>
@@ -400,6 +471,15 @@ const MAX_ZOOM = 6;
       font-size: 12px;
       font-family: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
       pointer-events: none;
+      /* An edge passing behind a name otherwise runs straight through the
+         letters. A halo rather than a filled box: the box is a rectangle of
+         card in the middle of the drawing, and at this density there are
+         enough of them to read as holes. */
+      text-shadow:
+        0 0 3px var(--surface),
+        0 0 3px var(--surface),
+        0 0 3px var(--surface),
+        0 0 6px var(--surface);
     }
 
     /* The marker leaves the circle up and to the left, clear of the side the
@@ -725,6 +805,72 @@ export class GraphView implements OnInit {
   }
 
   /**
+   * Which point on each circle's rim an edge leaves by and arrives at.
+   *
+   * `floating` was the obvious way to do this and does not work here: it picks
+   * the closest pair of handles, and for three services called by one — all of
+   * them to its right — the closest is the same point every time, so the three
+   * calls left as one ribbon again. Direction decides the side, and then the
+   * edges sharing a side are dealt out across it in the order their far ends
+   * are stacked, which is what keeps them from crossing on the way out.
+   *
+   * More than three a side and they start doubling up. That is a map that
+   * wants grouping rather than more rim.
+   */
+  private assignHandles(
+    edges: GraphEdge[],
+    data: ReadonlyMap<string, NodeData>,
+  ): Map<string, { source: string; target: string }> {
+    const centre = (id: string) => {
+      const node = data.get(id);
+      const at = this.points.get(id)?.();
+
+      return { x: (at?.x ?? 0) + (node?.r ?? 0), y: (at?.y ?? 0) + (node?.r ?? 0) };
+    };
+
+    // Grouped by the node and the side of it this edge uses, because the slots
+    // are per side: an edge leaving right and one leaving left do not compete.
+    const groups = new Map<string, GraphEdge[]>();
+    const key = (id: string, side: Side, end: 'out' | 'in') => `${id}|${side}|${end}`;
+    const sideOf = (edge: GraphEdge): Side =>
+      centre(edge.target).x >= centre(edge.source).x ? 'right' : 'left';
+
+    for (const edge of edges) {
+      const side = sideOf(edge);
+
+      groups.set(key(edge.source, side, 'out'), [
+        ...(groups.get(key(edge.source, side, 'out')) ?? []),
+        edge,
+      ]);
+      groups.set(key(edge.target, OPPOSITE[side], 'in'), [
+        ...(groups.get(key(edge.target, OPPOSITE[side], 'in')) ?? []),
+        edge,
+      ]);
+    }
+
+    for (const [at, list] of groups) {
+      const far = at.endsWith('out') ? 'target' : 'source';
+
+      list.sort((a, b) => centre(a[far]).y - centre(b[far]).y);
+    }
+
+    const assigned = new Map<string, { source: string; target: string }>();
+
+    for (const edge of edges) {
+      const side = sideOf(edge);
+      const out = groups.get(key(edge.source, side, 'out')) ?? [];
+      const into = groups.get(key(edge.target, OPPOSITE[side], 'in')) ?? [];
+
+      assigned.set(`${edge.source}>${edge.target}`, {
+        source: RIM[side][slot(out.indexOf(edge), out.length)],
+        target: RIM[OPPOSITE[side]][slot(into.indexOf(edge), into.length)],
+      });
+    }
+
+    return assigned;
+  }
+
+  /**
    * The service graph as something the flow library can draw.
    *
    * dagre does the layering — callers left of what they call, crossings
@@ -757,6 +903,10 @@ export class GraphView implements OnInit {
         r,
         failing: node.spans > 0 && node.errors / node.spans > ERROR_THRESHOLD,
         entry: entries.has(node.id),
+        // Two thirds up the side; the rim is then r·(1 − √(1 − 0.66²)) back
+        // from the equator, which rounds to a quarter of the radius.
+        spread: r * HANDLE_SPREAD,
+        inset: r * (1 - Math.sqrt(1 - HANDLE_SPREAD * HANDLE_SPREAD)),
       });
     }
 
@@ -822,8 +972,12 @@ export class GraphView implements OnInit {
     const busiestEdge = Math.max(...graph.edges.map((edge) => edge.calls), 1);
     const neighbours = new Map<string, Set<string>>();
 
-    const edges = graph.edges
-      .filter((edge) => present.has(edge.source) && present.has(edge.target))
+    const drawable = graph.edges.filter(
+      (edge) => present.has(edge.source) && present.has(edge.target),
+    );
+    const handles = this.assignHandles(drawable, data);
+
+    const edges = drawable
       .map((edge) => {
         neighbours.set(edge.source, (neighbours.get(edge.source) ?? new Set()).add(edge.target));
         neighbours.set(edge.target, (neighbours.get(edge.target) ?? new Set()).add(edge.source));
@@ -832,14 +986,16 @@ export class GraphView implements OnInit {
         // would draw every edge but the busiest as a hairline.
         const width = 1 + 5 * (Math.log1p(edge.calls) / Math.log1p(busiestEdge));
 
+        const id = `${edge.source}>${edge.target}`;
+        const rim = handles.get(id);
+
         return {
-          id: `${edge.source}>${edge.target}`,
+          id,
           source: edge.source,
           target: edge.target,
           type: 'template' as const,
-          // Floating: the library picks the side of each circle that faces the
-          // other end, instead of every edge leaving from one fixed handle.
-          floating: signal(true),
+          sourceHandle: rim?.source,
+          targetHandle: rim?.target,
           curve: signal('bezier' as const),
           markers: signal({ end: { type: 'arrow-closed' as const, color: 'currentColor' } }),
           edgeLabels: signal({
