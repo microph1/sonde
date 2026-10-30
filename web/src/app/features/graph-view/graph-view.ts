@@ -45,6 +45,9 @@ interface Point {
 interface Layout {
   readonly nodes: PlacedNode[];
   readonly edges: PlacedEdge[];
+  /** Who each node shares an edge with, so hovering one can pick out the part
+   * of the map it belongs to. */
+  readonly neighbours: ReadonlyMap<string, ReadonlySet<string>>;
   /** Sized to what is drawn, not to the grid it was placed on. See [`frame`]. */
   readonly viewBox: string;
 }
@@ -101,6 +104,8 @@ const MARGIN = { x: 130, y: 70 };
  * set, and the widest the whole fan is allowed to open to. */
 const FAN_STEP = 0.38;
 const FAN_ARC = 1.7;
+/** The least room, in svg units, to leave between two of them on the rim. */
+const MIN_GAP = 13;
 /** How far an edge is bowed aside for each column it passes over. */
 const BOW = 70;
 /** Above this share of spans in error, a node or an edge is drawn as failing.
@@ -179,15 +184,26 @@ const ERROR_THRESHOLD = 0.01;
                  frame rather than redefining what a unit is. -->
             <g [attr.transform]="transform$ | async">
 
+            @let hovered = hovered$ | async;
+
             @for (placed of layout.edges; track placed.edge.source + '>' + placed.edge.target) {
+              @let touches = !hovered || placed.edge.source === hovered || placed.edge.target === hovered;
+
               <path
                 class="edge"
                 [class.failing]="placed.failing"
+                [class.lit]="hovered && touches"
+                [class.faded]="hovered && !touches"
                 [attr.d]="placed.path"
                 [attr.stroke-width]="placed.width"
                 marker-end="url(#arrow)"
               />
-              <text class="edge-label" [attr.x]="placed.labelX" [attr.y]="placed.labelY">
+              <text
+                class="edge-label"
+                [class.faded]="hovered && !touches"
+                [attr.x]="placed.labelX"
+                [attr.y]="placed.labelY"
+              >
                 {{ placed.edge.calls | number }}
               </text>
             }
@@ -197,8 +213,13 @@ const ERROR_THRESHOLD = 0.01;
                 class="node"
                 [class.failing]="node.failing"
                 [class.moving]="node.id === moving?.id"
+                [class.faded]="!lit(layout, node, hovered)"
                 [attr.transform]="'translate(' + node.x + ',' + node.y + ')'"
                 (pointerdown)="grabNode($event, node, layout.viewBox)"
+                (pointerenter)="highlight(node.id)"
+                (pointerleave)="highlight(null)"
+                (focus)="highlight(node.id)"
+                (blur)="highlight(null)"
                 (click)="openTraces(node.id)"
                 [attr.tabindex]="0"
                 (keydown.enter)="openTraces(node.id)"
@@ -358,6 +379,56 @@ const ERROR_THRESHOLD = 0.01;
       opacity: 0.9;
     }
 
+    /* Hovering a service picks out the part of the map it belongs to. The
+       dashes travel source to target, which is the one thing an arrowhead at
+       the far end says only once and only if you look for it. */
+    .edge.lit {
+      opacity: 0.95;
+      /* Long dashes and short gaps: an edge is drawn several units wide, and a
+         square dash on a 6px stroke reads as a row of blocks rather than as a
+         line that is moving. */
+      stroke-dasharray: 16 7;
+      stroke-linecap: round;
+      animation: flow 900ms linear infinite;
+    }
+
+    @keyframes flow {
+      to {
+        stroke-dashoffset: -23;
+      }
+    }
+
+    .edge.faded {
+      opacity: 0.07;
+    }
+
+    .node.faded {
+      opacity: 0.22;
+    }
+
+    .edge-label.faded {
+      opacity: 0.12;
+    }
+
+    .edge,
+    .node,
+    .edge-label {
+      transition: opacity 140ms ease;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .edge.lit {
+        stroke-dasharray: none;
+        animation: none;
+      }
+
+      .edge,
+      .node,
+      .edge-label {
+        transition: none;
+      }
+    }
+
     .arrow {
       fill: var(--text-dim);
     }
@@ -501,6 +572,30 @@ export class GraphView implements OnInit {
   protected panning = false;
 
   protected readonly entryAngle = ENTRY_ANGLE;
+
+  /**
+   * The node under the pointer, which is the one thing that makes a busy map
+   * readable: everything it does not touch is pushed into the background for
+   * as long as you are looking at it.
+   */
+  private readonly hovered$$ = new BehaviorSubject<string | null>(null);
+  protected readonly hovered$ = this.hovered$$.asObservable();
+
+  /** Ignored mid-drag: the pointer is busy carrying a node, and the nodes it
+   * passes over are not being looked at. */
+  protected highlight(id: string | null): void {
+    if (this.moving) {
+      return;
+    }
+
+    this.hovered$$.next(id);
+  }
+
+  /** Whether a node keeps its colour: the hovered one, and whatever it talks
+   * to. Everything else fades. */
+  protected lit(layout: Layout, node: PlacedNode, hovered: string | null): boolean {
+    return !hovered || node.id === hovered || (layout.neighbours.get(hovered)?.has(node.id) ?? false);
+  }
 
   /**
    * The frame as it was when a node drag began, or null when none is running.
@@ -733,9 +828,14 @@ export class GraphView implements OnInit {
  * the way out.
  */
 function anchor(node: PlacedNode, index: number, count: number, side: 1 | -1, pad: number) {
-  const spread = Math.min(FAN_ARC, FAN_STEP * Math.max(0, count - 1));
-  const angle = count > 1 ? spread * (index / (count - 1) - 0.5) : 0;
   const r = node.r + pad;
+  // An angle buys less room on a small circle than on a large one, and the
+  // quiet services are the small ones: two arrowheads into a 20px node landed
+  // on top of each other. The fan opens by whichever is wider, a fixed angle
+  // or the angle that leaves MIN_GAP between neighbours on this rim.
+  const gap = Math.max(FAN_STEP, MIN_GAP / r);
+  const spread = Math.min(FAN_ARC, gap * Math.max(0, count - 1));
+  const angle = count > 1 ? spread * (index / (count - 1) - 0.5) : 0;
 
   return { x: node.x + side * r * Math.cos(angle), y: node.y + r * Math.sin(angle) };
 }
@@ -918,7 +1018,16 @@ function layout(graph: ServiceGraph, moved: ReadonlyMap<string, Point> = new Map
     edges.filter((placed) => placed.edge.source === placed.edge.target).map((placed) => placed.edge.source),
   );
 
-  return { nodes, edges, viewBox: frame(nodes, looping, edges) };
+  const neighbours = new Map<string, Set<string>>();
+
+  for (const placed of edges) {
+    const { source, target } = placed.edge;
+
+    neighbours.set(source, (neighbours.get(source) ?? new Set()).add(target));
+    neighbours.set(target, (neighbours.get(target) ?? new Set()).add(source));
+  }
+
+  return { nodes, edges, neighbours, viewBox: frame(nodes, looping, edges) };
 }
 
 /**
